@@ -1,0 +1,614 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  CUSTOMER
+  ADMIN
+  SUPPORT
+  LOGISTICS
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  PARTIALLY_FULFILLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  PARTIAL
+  REFUNDED
+  CREDITED
+}
+
+enum PaymentMethod {
+  PAYSTACK
+  BANK_TRANSFER
+  CASH_ON_DELIVERY
+}
+
+enum FulfilmentStatus {
+  PENDING
+  FULFILLED
+  PARTIALLY_FULFILLED
+  UNFULFILLED
+}
+
+enum DiscountType {
+  FLAT_PERCENT
+  FLAT_AMOUNT
+  TIERED_QUANTITY
+}
+
+enum DiscountScope {
+  PRODUCT
+  ORDER
+}
+
+enum StoreCreditType {
+  CREDIT
+  DEBIT
+}
+
+enum StoreCreditReason {
+  ORDER_UNFULFILLED
+  ORDER_PARTIAL
+  ORDER_PAYMENT
+  ADMIN_ADJUSTMENT
+}
+
+// ── Models ──────────────────────────────────────────────────────────────────
+
+model User {
+  id                 String    @id @default(uuid()) @map("id")
+  email              String    @unique @map("email")
+  firstName          String?   @map("first_name")
+  lastName           String?   @map("last_name")
+  phone              String?   @map("phone")
+  businessName       String?   @map("business_name")
+  role               Role      @default(CUSTOMER) @map("role")
+  isActive           Boolean   @default(true) @map("is_active")
+  password           String?   
+  isProfileComplete   Boolean   @default(false) @map("is_profile_complete")
+  isEmailVerified    Boolean   @default(false) @map("is_email_verified")
+  // denormalised cache — always recompute from StoreCreditTransaction ledger for accuracy
+  storeCreditBalance Decimal   @default(0) @map("store_credit_balance") @db.Decimal(12, 2)
+  fcmToken           String?   @map("fcm_token")
+  lastLogin          DateTime? @map("last_login")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  addresses          Address[]
+  cart               Cart?
+  orders             Order[]
+  storeCreditLedger  StoreCreditTransaction[] @relation("UserCredits")
+  storeCreditActions StoreCreditTransaction[] @relation("AdminActions")
+
+  @@map("users")
+}
+
+// OTP rows are single-use and expire after 10 minutes
+model Otp {
+  id        String   @id @default(uuid()) @map("id")
+  email     String   @map("email")
+  hash      String   @map("hash")
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false) @map("used")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([email])
+  @@index([expiresAt])
+  @@map("otps")
+}
+
+model Address {
+  id           String  @id @default(uuid()) @map("id")
+  userId       String  @map("user_id")
+  fullName     String  @map("full_name")
+  phone        String  @map("phone")
+  addressLine1 String  @map("address_line1")
+  addressLine2 String? @map("address_line2")
+  city         String  @map("city")
+  state        String  @map("state")
+  cityId       String? @map("city_id")
+  country      String  @default("Nigeria") @map("country")
+  postalCode   String? @map("postal_code")
+  isDefault    Boolean @default(false) @map("is_default")
+
+  user    User    @relation(fields: [userId], references: [id])
+  cityRef City?   @relation(fields: [cityId], references: [id])
+  orders  Order[]
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+// Supports flat tree (parent_id nullable) for subcategories
+model Category {
+  id          String   @id @default(uuid()) @map("id")
+  name        String   @map("name")
+  slug        String   @unique @map("slug")
+  description String?  @map("description")
+  imageUrl    String?  @map("image_url")
+  parentId    String?  @map("parent_id")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  @@index([parentId])
+  @@index([slug])
+  @@map("categories")
+}
+
+model Discount {
+  id        String        @id @default(uuid()) @map("id")
+  name      String        @map("name")
+  type      DiscountType  @map("type")
+  scope     DiscountScope @map("scope")
+  // used for flat_percent and flat_amount; ignored for tiered_quantity
+  value     Decimal?      @map("value") @db.Decimal(12, 2)
+  startsAt  DateTime?     @map("starts_at")
+  endsAt    DateTime?     @map("ends_at")
+  isActive  Boolean       @default(true) @map("is_active")
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  tiers    DiscountTier[]
+  products Product[]
+
+  @@index([isActive])
+  @@map("discounts")
+}
+
+model DiscountTier {
+  id              String  @id @default(uuid()) @map("id")
+  discountId      String  @map("discount_id")
+  minQty          Int     @map("min_qty")
+  maxQty          Int?    @map("max_qty")
+  discountPercent Decimal @map("discount_percent") @db.Decimal(5, 2)
+
+  discount Discount @relation(fields: [discountId], references: [id])
+
+  @@index([discountId])
+  @@map("discount_tiers")
+}
+
+// ── Product catalogue ────────────────────────────────────────────────────────
+
+model Product {
+  id                    String   @id @default(uuid()) @map("id")
+  name                  String   @map("name")
+  slug                  String   @unique @map("slug")
+  description           String?  @map("description")
+  categoryId            String   @map("category_id")
+  isActive              Boolean  @default(true) @map("is_active")
+  minOrderQty           Int      @default(1) @map("min_order_qty")
+  // quantity must be a multiple of this value; null = no restriction
+  orderIncrement        Int?     @map("order_increment")
+  // this variant must be in the cart before other variants of this product can be added
+  prerequisiteVariantId String?  @map("prerequisite_variant_id")
+  discountId            String?  @map("discount_id")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  category            Category        @relation(fields: [categoryId], references: [id])
+  discount            Discount?       @relation(fields: [discountId], references: [id])
+  prerequisiteVariant Variant?        @relation("PrerequisiteVariant", fields: [prerequisiteVariantId], references: [id])
+  options             ProductOption[]
+  variants            Variant[]       @relation("ProductVariants")
+  images              ProductImage[]
+  cartItems           CartItem[]
+  orderItems          OrderItem[]
+
+  @@index([categoryId])
+  @@index([discountId])
+  @@index([isActive])
+  @@index([slug])
+  @@map("products")
+}
+
+// ── Options ──────────────────────────────────────────────────────────────────
+//
+// Option is a global type (Color, Size, Pack Size).
+// ProductOption scopes it to a specific product with a display position.
+// OptionValue holds the per-product values (e.g. "Black" for Bflo 226's Color).
+//
+// Real examples from the store:
+//   Bflo 226  → Color  : Black, Brown, Pink, White, Nude, Blue
+//   APRON     → Pack Size: 3pcs, Dozen
+//   Aromantic → Quantity: 50pcs, 100pcs, 500pcs
+
+// Global option type — reused across many products
+model Option {
+  id          String   @id @default(uuid()) @map("id")
+  name        String   @unique @map("name") // e.g. "Color", "Size", "Pack Size"
+  displayName String   @map("display_name") // label shown in the UI
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  productOptions ProductOption[]
+
+  @@map("options")
+}
+
+// Links one global Option to one Product, with display position
+model ProductOption {
+  id        String   @id @default(uuid()) @map("id")
+  productId String   @map("product_id")
+  optionId  String   @map("option_id")
+  position  Int      @default(0) @map("position") // 0 = first selector shown
+  createdAt DateTime @default(now()) @map("created_at")
+
+  product Product       @relation(fields: [productId], references: [id])
+  option  Option        @relation(fields: [optionId], references: [id])
+  values  OptionValue[]
+
+  @@unique([productId, optionId])
+  @@index([productId])
+  @@index([optionId])
+  @@map("product_options")
+}
+
+// Per-product option values, scoped through ProductOption
+// isActive = false means this value is disabled/sold out in the selector UI
+model OptionValue {
+  id              String   @id @default(uuid()) @map("id")
+  productOptionId String   @map("product_option_id")
+  value           String   @map("value") // raw value: "Black", "35", "3pcs"
+  displayName     String?  @map("display_name") // override label if needed
+  position        Int      @default(0) @map("position")
+  // false = grey out this value in the UI (e.g. colour fully sold out across all its variants)
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  productOption ProductOption        @relation(fields: [productOptionId], references: [id])
+  variantValues VariantOptionValue[]
+
+  @@unique([productOptionId, value])
+  @@index([productOptionId])
+  @@map("option_values")
+}
+
+// ── Variants ─────────────────────────────────────────────────────────────────
+//
+// One variant = one unique combination of option values for a product.
+//
+// Single-option examples (most products in this store):
+//   Bflo 226 Black        → VariantOptionValue(Color=Black)
+//   Aromantic scent 50pcs → VariantOptionValue(Quantity=50pcs)
+//
+// Multi-option example (future shoe/bag products):
+//   Shoe Red + Size 35    → VariantOptionValue(Color=Red) + VariantOptionValue(Size=35)
+//
+// Stock is tracked per Variant, not per OptionValue.
+// Price can differ per Variant (e.g. 50pcs ≠ 100pcs price for Aromantic scent).
+
+model Variant {
+  id             String   @id @default(uuid()) @map("id")
+  productId      String   @map("product_id")
+  sku            String   @unique @map("sku")
+  price          Decimal  @map("price") @db.Decimal(12, 2)
+  compareAtPrice Decimal? @map("compare_at_price") @db.Decimal(12, 2)
+  stockQty       Int      @default(0) @map("stock_qty")
+  // false = this specific combination is disabled regardless of stock
+  isActive       Boolean  @default(true) @map("is_active")
+  weightKg       Decimal? @map("weight_kg") @db.Decimal(8, 3)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  product                 Product              @relation("ProductVariants", fields: [productId], references: [id])
+  // products that require this variant to be in cart first
+  prerequisiteForProducts Product[]            @relation("PrerequisiteVariant")
+  optionValues            VariantOptionValue[]
+  images                  VariantImage[]
+  cartItems               CartItem[]
+  orderItems              OrderItem[]
+
+  @@index([productId])
+  @@index([sku])
+  @@map("variants")
+}
+
+// Maps each variant to its selected OptionValue per option
+// One row per option dimension (single-option → 1 row; two-option → 2 rows per variant)
+model VariantOptionValue {
+  id            String @id @default(uuid()) @map("id")
+  variantId     String @map("variant_id")
+  optionValueId String @map("option_value_id")
+
+  variant     Variant     @relation(fields: [variantId], references: [id])
+  optionValue OptionValue @relation(fields: [optionValueId], references: [id])
+
+  @@unique([variantId, optionValueId])
+  @@index([variantId])
+  @@index([optionValueId])
+  @@map("variant_option_values")
+}
+
+// ── Images ───────────────────────────────────────────────────────────────────
+
+// Central S3 asset record — uploaded once, referenced by many products/variants
+model Image {
+  id         String   @id @default(uuid()) @map("id")
+  s3Key      String   @unique @map("s3_key")
+  url        String   @map("url")
+  mimeType   String   @map("mime_type")
+  sizeBytes  Int      @map("size_bytes")
+  altText    String?  @map("alt_text")
+  uploadedBy String   @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  productImages ProductImage[]
+  variantImages VariantImage[]
+
+  @@map("images")
+}
+
+// Join table — one product can use many images; one image can appear on many products
+model ProductImage {
+  id        String   @id @default(uuid()) @map("id")
+  productId String   @map("product_id")
+  imageId   String   @map("image_id")
+  position  Int      @default(0) @map("position")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id])
+  image   Image   @relation(fields: [imageId], references: [id])
+
+  @@unique([productId, imageId])
+  @@index([productId])
+  @@index([imageId])
+  @@map("product_images")
+}
+
+// Join table — one variant can use many images; one image can appear on many variants
+model VariantImage {
+  id        String   @id @default(uuid()) @map("id")
+  variantId String   @map("variant_id")
+  imageId   String   @map("image_id")
+  position  Int      @default(0) @map("position")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  variant Variant @relation(fields: [variantId], references: [id])
+  image   Image   @relation(fields: [imageId], references: [id])
+
+  @@unique([variantId, imageId])
+  @@index([variantId])
+  @@index([imageId])
+  @@map("variant_images")
+}
+
+// ── Cart ─────────────────────────────────────────────────────────────────────
+
+model Cart {
+  id        String   @id @default(uuid()) @map("id")
+  // userId is unique — one active cart per user
+  userId    String?  @unique @map("user_id")
+  sessionId String?  @unique @map("session_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user  User?      @relation(fields: [userId], references: [id])
+  items CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id                  String   @id @default(uuid()) @map("id")
+  cartId              String   @map("cart_id")
+  productId           String   @map("product_id")
+  variantId           String   @map("variant_id")
+  quantity            Int      @map("quantity")
+  unitPrice           Decimal  @map("unit_price") @db.Decimal(12, 2)
+  discountedUnitPrice Decimal? @map("discounted_unit_price") @db.Decimal(12, 2)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  cart    Cart    @relation(fields: [cartId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  variant Variant @relation(fields: [variantId], references: [id])
+
+  // one row per variant per cart
+  @@unique([cartId, variantId])
+  @@index([cartId])
+  @@index([variantId])
+  @@map("cart_items")
+}
+
+// ── Orders ───────────────────────────────────────────────────────────────────
+
+model Order {
+  id                 String        @id @default(uuid()) @map("id")
+  orderNumber        String        @unique @map("order_number")
+  userId             String        @map("user_id")
+  status             OrderStatus   @default(PENDING) @map("status")
+  paymentStatus      PaymentStatus @default(UNPAID) @map("payment_status")
+  paymentMethod      PaymentMethod @map("payment_method")
+  shippingAddressId  String        @map("shipping_address_id")
+  logisticsId        String?       @map("logistics_id")
+  subtotal           Decimal       @map("subtotal") @db.Decimal(12, 2)
+  discountAmount     Decimal       @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  shippingFee        Decimal       @default(0) @map("shipping_fee") @db.Decimal(12, 2)
+  // amount deducted from user store credit for this order
+  storeCreditApplied Decimal       @default(0) @map("store_credit_applied") @db.Decimal(12, 2)
+  // total - store_credit_applied
+  paystackAmount     Decimal       @default(0) @map("paystack_amount") @db.Decimal(12, 2)
+  total              Decimal       @map("total") @db.Decimal(12, 2)
+  paystackReference  String?       @map("paystack_reference")
+  paystackAccessCode String?       @map("paystack_access_code")
+  notes              String?       @map("notes")
+  placedAt           DateTime      @default(now()) @map("placed_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  user            User                     @relation(fields: [userId], references: [id])
+  shippingAddress Address                  @relation(fields: [shippingAddressId], references: [id])
+  logistics       LogisticsCompany?        @relation(fields: [logisticsId], references: [id])
+  items           OrderItem[]
+  storeCreditTxns StoreCreditTransaction[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([orderNumber])
+  @@index([placedAt])
+  @@map("orders")
+}
+
+// product_name / variant_name / sku are snapshotted at order time — never rely on joined product for history
+model OrderItem {
+  id                String           @id @default(uuid()) @map("id")
+  orderId           String           @map("order_id")
+  productId         String           @map("product_id")
+  variantId         String           @map("variant_id")
+  productName       String           @map("product_name")
+  variantName       String           @map("variant_name")
+  sku               String           @map("sku")
+  quantity          Int              @map("quantity")
+  // set by admin when dispatching; shortfall triggers store credit
+  quantityFulfilled Int              @default(0) @map("quantity_fulfilled")
+  unitPrice         Decimal          @map("unit_price") @db.Decimal(12, 2)
+  discountAmount    Decimal          @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  lineTotal         Decimal          @map("line_total") @db.Decimal(12, 2)
+  fulfilmentStatus  FulfilmentStatus @default(PENDING) @map("fulfilment_status")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  order           Order                    @relation(fields: [orderId], references: [id])
+  product         Product                  @relation(fields: [productId], references: [id])
+  variant         Variant                  @relation(fields: [variantId], references: [id])
+  storeCreditTxns StoreCreditTransaction[]
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([variantId])
+  @@map("order_items")
+}
+
+// ── Store Credit Ledger ──────────────────────────────────────────────────────
+
+// Immutable ledger — never update or delete rows, only append
+model StoreCreditTransaction {
+  id           String            @id @default(uuid()) @map("id")
+  userId       String            @map("user_id")
+  type         StoreCreditType   @map("type")
+  reason       StoreCreditReason @map("reason")
+  amount       Decimal           @map("amount") @db.Decimal(12, 2)
+  // snapshot of user.store_credit_balance immediately after this transaction
+  balanceAfter Decimal           @map("balance_after") @db.Decimal(12, 2)
+  orderId      String?           @map("order_id")
+  orderItemId  String?           @map("order_item_id")
+  note         String?           @map("note")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  createdBy    String            @map("created_by")
+
+  user      User       @relation("UserCredits", fields: [userId], references: [id])
+  admin     User       @relation("AdminActions", fields: [createdBy], references: [id])
+  order     Order?     @relation(fields: [orderId], references: [id])
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id])
+
+  @@index([userId])
+  @@index([orderId])
+  @@index([createdAt])
+  @@map("store_credit_transactions")
+}
+
+// ── Logistics ────────────────────────────────────────────────────────────────
+
+model State {
+  id        String   @id @default(uuid()) @map("id")
+  name      String   @unique @map("name")
+  capital   String?  @map("capital")
+  latitude  Decimal? @map("latitude") @db.Decimal(10, 7)
+  longitude Decimal? @map("longitude") @db.Decimal(10, 7)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  cities City[]
+
+  @@map("states")
+}
+
+model City {
+  id        String   @id @default(uuid()) @map("id")
+  name      String   @map("name")
+  stateId   String   @map("state_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  state              State               @relation(fields: [stateId], references: [id])
+  addresses          Address[]
+  localGovernments   LocalGovernment[]
+  logisticsCoverages LogisticsCoverage[]
+
+  @@unique([name, stateId])
+  @@index([stateId])
+  @@map("cities")
+}
+
+model LocalGovernment {
+  id        String   @id @default(uuid()) @map("id")
+  name      String   @map("name")
+  cityId    String?  @map("city_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  city               City?               @relation(fields: [cityId], references: [id])
+  logisticsCoverages LogisticsCoverage[]
+
+  @@index([cityId])
+  @@map("local_governments")
+}
+
+model LogisticsCompany {
+  id        String   @id @default(uuid()) @map("id")
+  name      String   @unique @map("name")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  coverages LogisticsCoverage[]
+  orders    Order[]
+
+  @@map("logistics_companies")
+}
+
+model LogisticsCoverage {
+  id                 String   @id @default(uuid()) @map("id")
+  logisticsCompanyId String   @map("logistics_company_id")
+  cityId             String   @map("city_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  logisticsCompany  LogisticsCompany @relation(fields: [logisticsCompanyId], references: [id])
+  city              City             @relation(fields: [cityId], references: [id])
+  localGovernment   LocalGovernment? @relation(fields: [localGovernmentId], references: [id])
+  localGovernmentId String?
+
+  @@unique([logisticsCompanyId, cityId])
+  @@index([logisticsCompanyId])
+  @@index([cityId])
+  @@map("logistics_coverages")
+}
