@@ -9,7 +9,7 @@ export class AppController {
 
   @Get()
   @ApiOperation({ summary: 'Health check' })
-  getHello(): string {
-    return this.appService.getHello();
+  healthCheck() {
+    return this.appService.healthCheck();
   }
 }
