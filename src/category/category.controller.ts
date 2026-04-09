@@ -8,6 +8,7 @@ import {
   Post,
   Query,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -21,6 +22,8 @@ import {
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
+import { Cacheable } from 'src/cache/cache.decorator';
+import { CacheInterceptor } from 'src/cache/cache.interceptor';
 import { CategoryService } from './category.service';
 import {
   CategoryListResponseDto,
@@ -41,6 +44,8 @@ export class CategoryController {
   // ── Public ───────────────────────────────────────────────────────────────────
 
   @Get()
+  @UseInterceptors(CacheInterceptor)
+  @Cacheable(1800)
   @ApiOperation({ summary: 'List categories with search, sort, filter, and pagination' })
   @ApiOkResponse({
     description: 'Categories returned',
@@ -57,6 +62,8 @@ export class CategoryController {
   }
 
   @Get('tree')
+  @UseInterceptors(CacheInterceptor)
+  @Cacheable(3600)
   @ApiOperation({ summary: 'Get full nested tree: root categories → subcategories → sub-subcategories' })
   @ApiOkResponse({
     description: 'Category tree returned',
@@ -76,6 +83,8 @@ export class CategoryController {
   }
 
   @Get(':slug')
+  @UseInterceptors(CacheInterceptor)
+  @Cacheable(1800)
   @ApiOperation({ summary: 'Get a category by slug with its subcategories' })
   @ApiParam({ name: 'slug', example: 'bags' })
   @ApiOkResponse({

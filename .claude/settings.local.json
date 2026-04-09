@@ -3,7 +3,11 @@
     "allow": [
       "WebFetch(domain:everythingflorences.myshopify.com)",
       "Bash(npx prisma:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(yarn:*)"
+    ],
+    "deny": [
+      "Bash(npm:*)"
     ]
   }
 }

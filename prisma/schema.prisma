@@ -584,11 +584,15 @@ model LocalGovernment {
 }
 
 model LogisticsCompany {
-  id        String   @id @default(uuid()) @map("id")
-  name      String   @unique @map("name")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id          String   @id @default(uuid()) @map("id")
+  name        String   @unique @map("name")
+  phone       String?  @map("phone")
+  email       String?  @map("email")
+  description String?  @map("description")
+  logoUrl     String?  @map("logo_url")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   coverages LogisticsCoverage[]
   orders    Order[]
@@ -600,12 +604,13 @@ model LogisticsCoverage {
   id                 String   @id @default(uuid()) @map("id")
   logisticsCompanyId String   @map("logistics_company_id")
   cityId             String   @map("city_id")
+  localGovernmentId  String?  @map("local_government_id")
+  shippingFee        Decimal  @default(0) @map("shipping_fee") @db.Decimal(12, 2)
   createdAt          DateTime @default(now()) @map("created_at")
 
-  logisticsCompany  LogisticsCompany @relation(fields: [logisticsCompanyId], references: [id])
-  city              City             @relation(fields: [cityId], references: [id])
-  localGovernment   LocalGovernment? @relation(fields: [localGovernmentId], references: [id])
-  localGovernmentId String?
+  logisticsCompany LogisticsCompany @relation(fields: [logisticsCompanyId], references: [id])
+  city             City             @relation(fields: [cityId], references: [id])
+  localGovernment  LocalGovernment? @relation(fields: [localGovernmentId], references: [id])
 
   @@unique([logisticsCompanyId, cityId])
   @@index([logisticsCompanyId])

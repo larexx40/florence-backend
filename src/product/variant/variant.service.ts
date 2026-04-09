@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse, PaginatedData } from 'src/common/types';
+import { CacheService } from 'src/cache/cache.service';
+import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
 import { CreateVariantDto, UpdateStockDto, UpdateVariantDto, VariantQueryDto } from './dto/variant.dto';
 
 const VARIANT_INCLUDE = {
@@ -24,7 +26,10 @@ const VARIANT_INCLUDE = {
 
 @Injectable()
 export class VariantService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -176,6 +181,7 @@ export class VariantService {
       include: VARIANT_INCLUDE,
     });
 
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return {
       status: true,
       message: 'Variant created successfully',
@@ -209,6 +215,7 @@ export class VariantService {
       include: VARIANT_INCLUDE,
     });
 
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return {
       status: true,
       message: 'Variant updated successfully',
@@ -229,6 +236,7 @@ export class VariantService {
       select: { id: true, sku: true, stockQty: true },
     });
 
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return {
       status: true,
       message: 'Stock updated successfully',
@@ -243,6 +251,7 @@ export class VariantService {
     if (inOrders) {
       // soft-delete — cannot hard-delete because order history references this variant
       await this.prisma.variant.update({ where: { id: variantId }, data: { isActive: false } });
+      await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
       return {
         status: true,
         message: 'Variant deactivated (it exists in order history)',
@@ -257,6 +266,7 @@ export class VariantService {
       this.prisma.variant.delete({ where: { id: variantId } }),
     ]);
 
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return { status: true, message: 'Variant deleted successfully', data: null };
   }
 }

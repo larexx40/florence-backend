@@ -8,6 +8,7 @@ import {
   Post,
   Query,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -18,6 +19,8 @@ import {
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
+import { Cacheable } from 'src/cache/cache.decorator';
+import { CacheInterceptor } from 'src/cache/cache.interceptor';
 import { ProductService } from './product.service';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
 
@@ -29,6 +32,8 @@ export class ProductController {
   // ── Public ───────────────────────────────────────────────────────────────────
 
   @Get()
+  @UseInterceptors(CacheInterceptor)
+  @Cacheable(900)
   @ApiOperation({ summary: 'List all active products with search, sort, filter, and pagination' })
   @ApiResponse({ status: 200, description: 'Products returned' })
   getAll(@Query() query: ProductQueryDto) {
@@ -36,6 +41,8 @@ export class ProductController {
   }
 
   @Get(':slug')
+  @UseInterceptors(CacheInterceptor)
+  @Cacheable(600)
   @ApiOperation({ summary: 'Get full product detail by slug including options and variants' })
   @ApiParam({ name: 'slug', example: 'bflo-226' })
   @ApiResponse({ status: 200, description: 'Product returned' })

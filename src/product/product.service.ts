@@ -7,6 +7,8 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse, PaginatedData } from 'src/common/types';
+import { CacheService } from 'src/cache/cache.service';
+import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
 
 // ── Shared include shapes ────────────────────────────────────────────────────
@@ -59,7 +61,10 @@ const PRODUCT_DETAIL_INCLUDE = {
 export class ProductService {
   private readonly logger = new Logger(ProductService.name, { timestamp: true });
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   // ── Public queries ───────────────────────────────────────────────────────────
 
@@ -170,6 +175,7 @@ export class ProductService {
       include: PRODUCT_DETAIL_INCLUDE,
     });
 
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return {
       status: true,
       message: 'Product created successfully',
@@ -216,6 +222,7 @@ export class ProductService {
       include: PRODUCT_DETAIL_INCLUDE,
     });
 
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return {
       status: true,
       message: 'Product updated successfully',
@@ -233,6 +240,7 @@ export class ProductService {
       data: { isActive: false },
     });
 
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return {
       status: true,
       message: 'Product deactivated successfully',

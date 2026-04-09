@@ -4,9 +4,15 @@ import { AppService } from './app.service';
 import { PrismaService } from './prisma/prisma.service';
 import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
+import { BullModule } from '@nestjs/bull';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductModule } from './product/product.module';
 import { CategoryModule } from './category/category.module';
+import { AppCacheModule } from './cache/cache.module';
+import { LocationModule } from './location/location.module';
+import { LogisticsModule } from './logistics/logistics.module';
+import { ShippingAddressModule } from './shipping-address/shipping-address.module';
+import { MailModule } from './mail/mail.module';
 
 @Module({
   imports: [
@@ -14,10 +20,22 @@ import { CategoryModule } from './category/category.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    BullModule.forRoot({
+      redis: {
+        host: process.env.REDIS_HOST ?? 'localhost',
+        port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
+        password: process.env.REDIS_PASSWORD || undefined,
+      },
+    }),
+    AppCacheModule,
     AuthModule,
     PrismaModule,
     ProductModule,
     CategoryModule,
+    LocationModule,
+    LogisticsModule,
+    ShippingAddressModule,
+    MailModule,
   ],
   controllers: [AppController],
   providers: [AppService, PrismaService],

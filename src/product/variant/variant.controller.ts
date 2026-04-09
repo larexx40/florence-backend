@@ -8,6 +8,7 @@ import {
   Post,
   Query,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -18,6 +19,8 @@ import {
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
+import { Cacheable } from 'src/cache/cache.decorator';
+import { CacheInterceptor } from 'src/cache/cache.interceptor';
 import { VariantService } from './variant.service';
 import {
   CreateVariantDto,
@@ -34,6 +37,8 @@ export class VariantController {
   // ── Public ───────────────────────────────────────────────────────────────────
 
   @Get()
+  @UseInterceptors(CacheInterceptor)
+  @Cacheable(600)
   @ApiOperation({ summary: 'List variants for a product with sort, filter, and pagination' })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
   @ApiResponse({ status: 200, description: 'Variants returned' })

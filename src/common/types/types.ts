@@ -10,3 +10,10 @@ export interface PaginatedData {
     currentPage: number;
     perPage: number;
 }
+
+export interface FileUpload {
+    buffer: Buffer;
+    originalname: string;
+    mimetype: string;
+    size: number;
+}

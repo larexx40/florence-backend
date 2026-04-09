@@ -7,6 +7,8 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse } from 'src/common/types';
+import { CacheService } from 'src/cache/cache.service';
+import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
 import {
   CategoryListResponseDto,
   CategoryQueryDto,
@@ -56,7 +58,10 @@ function toTreeResponse(raw: any): CategoryTreeResponseDto {
 
 @Injectable()
 export class CategoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -208,6 +213,7 @@ export class CategoryService {
       include: CATEGORY_INCLUDE,
     });
 
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/categories'));
     return {
       status: true,
       message: 'Category created successfully',
@@ -253,6 +259,7 @@ export class CategoryService {
       include: CATEGORY_INCLUDE,
     });
 
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/categories'));
     return {
       status: true,
       message: 'Category updated successfully',
@@ -266,6 +273,7 @@ export class CategoryService {
     const hasProducts = await this.prisma.product.findFirst({ where: { categoryId: id } });
     if (hasProducts) {
       await this.prisma.category.update({ where: { id }, data: { isActive: false } });
+      await this.cache.invalidateByPrefix(buildInvalidationPrefix('/categories'));
       return {
         status: true,
         message: 'Category deactivated (products are still referencing it)',
@@ -276,6 +284,7 @@ export class CategoryService {
     const hasChildren = await this.prisma.category.findFirst({ where: { parentId: id } });
     if (hasChildren) {
       await this.prisma.category.update({ where: { id }, data: { isActive: false } });
+      await this.cache.invalidateByPrefix(buildInvalidationPrefix('/categories'));
       return {
         status: true,
         message: 'Category deactivated (it has subcategories)',
@@ -284,6 +293,7 @@ export class CategoryService {
     }
 
     await this.prisma.category.delete({ where: { id } });
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/categories'));
     return { status: true, message: 'Category deleted successfully', data: null };
   }
 

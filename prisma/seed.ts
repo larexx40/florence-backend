@@ -1405,49 +1405,69 @@ const citiesData = {
     ]
 }
 
+
 async function main() {
-    console.log('Seeding states and local governments...');
-
-    // Create a map for state data
-    const stateMap = new Map();
-    for (const state of statesData) {
-        stateMap.set(state.name, state);
-    }
-
-    // Adjust for FCT
-    stateMap.set('Federal Capital Territory', stateMap.get('Abuja'));
-
-    for (const [stateName, localGovernments] of Object.entries(localGovernmentsData)) {
-        const stateData = stateMap.get(stateName);
-        if (!stateData) {
-            console.log(`No data for state: ${stateName}`);
-            continue;
-        }
-
-        const state = await prisma.state.create({
-            data: {
-                name: stateName,
-                capital: stateData.capital,
-                latitude: stateData.latitude,
-                longitude: stateData.longitude,
-            },
-        });
-
-        console.log(`Created state: ${state.name}`);
-
-        for (const localGovernmentName of localGovernments) {
-            await prisma.localGovernment.create({
+    // ── States ───────────────────────────────────────────────────────────────────
+    const stateCount = await prisma.state.count();
+    if (stateCount > 0) {
+        console.log(`States already seeded (${stateCount} rows) — skipping.`);
+    } else {
+        for (const stateData of statesData) {
+            await prisma.state.create({
                 data: {
-                    name: localGovernmentName,
-                    cityId: null,
+                    name: stateData.name,
+                    capital: stateData.capital ?? null,
+                    latitude: stateData.latitude ?? null,
+                    longitude: stateData.longitude ?? null,
                 },
             });
         }
-
-        console.log(`Created ${localGovernments.length} local governments for ${state.name}`);
+        console.log(`Seeded ${statesData.length} states.`);
     }
 
-    console.log('Seeding completed.');
+    // ── Cities ────────────────────────────────────────────────────────────────────
+    const cityCount = await prisma.city.count();
+    if (cityCount > 0) {
+        console.log(`Cities already seeded (${cityCount} rows) — skipping.`);
+    } else {
+        const allStates = await prisma.state.findMany({ select: { id: true, name: true } });
+        const stateNameToId = new Map(allStates.map((s) => [s.name, s.id]));
+        // FCT alias used as a key in citiesData
+        if (!stateNameToId.has('Federal Capital Territory') && stateNameToId.has('Abuja')) {
+            stateNameToId.set('Federal Capital Territory', stateNameToId.get('Abuja')!);
+        }
+
+        let totalCities = 0;
+        for (const [stateName, cityNames] of Object.entries(citiesData)) {
+            const stateId = stateNameToId.get(stateName);
+            if (!stateId) {
+                console.log(`State not found in DB: "${stateName}" — skipping its cities.`);
+                continue;
+            }
+            for (const cityName of cityNames as string[]) {
+                await prisma.city.create({ data: { name: cityName, stateId } });
+                totalCities++;
+            }
+        }
+        console.log(`Seeded ${totalCities} cities.`);
+    }
+
+    // ── Local Governments ─────────────────────────────────────────────────────────
+    const lgCount = await prisma.localGovernment.count();
+    if (lgCount > 0) {
+        console.log(`Local governments already seeded (${lgCount} rows) — skipping.`);
+    } else {
+        let totalLgas = 0;
+        for (const [, lgas] of Object.entries(localGovernmentsData)) {
+            for (const lgName of lgas as string[]) {
+                await prisma.localGovernment.create({ data: { name: lgName, cityId: null } });
+                totalLgas++;
+            }
+        }
+        console.log(`Seeded ${totalLgas} local governments.`);
+    }
+
+    console.log('Seeding complete.');
 }
 
 main()

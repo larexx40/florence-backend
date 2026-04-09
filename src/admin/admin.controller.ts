@@ -67,14 +67,4 @@ export class AdminController {
         return this.adminService.addAdmin(request, input);
     }
 
-    @Get('populate-banks')
-    @ApiOperation({ summary: 'Populate bank providers from Paystack' })
-    @ApiResponse({ status: 200, description: 'Bank providers populated' })
-    @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
-    async populatePaystackBankProvider(
-        @Req() request: IRequest,
-    ) {
-        return await this.adminService.populatePaystackBankProvider(request);
-    }
 }
