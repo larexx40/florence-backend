@@ -34,5 +34,9 @@ COPY prisma ./prisma
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
+# Transfer ownership and run as non-root (node user already exists in node:20-alpine)
+RUN chown -R node:node /app
+USER node
+
 EXPOSE 3000
 ENTRYPOINT ["./entrypoint.sh"]

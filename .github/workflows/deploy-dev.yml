@@ -42,18 +42,54 @@ jobs:
             set -e
             cd /home/ubuntu/florence-backend
 
-            # Authenticate with Docker Hub on the EC2
+            # ── Write .env from GitHub Secrets ────────────────────────────────────────
+            cat > .env <<'EOF'
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            JWT_SECRET_ACCESS_KEY=${{ secrets.JWT_SECRET_ACCESS_KEY }}
+            JWT_SECRET_REFRESH_KEY=${{ secrets.JWT_SECRET_REFRESH_KEY }}
+            ACCESS_TOKEN_TTL=${{ secrets.ACCESS_TOKEN_TTL }}
+            REFRESH_TOKEN_TTL=${{ secrets.REFRESH_TOKEN_TTL }}
+            NODE_ENV=${{ secrets.NODE_ENV }}
+            S3_ASSET_BUCKET_NAME=${{ secrets.S3_ASSET_BUCKET_NAME }}
+            AWS_S3_REGION=${{ secrets.AWS_S3_REGION }}
+            AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            SMTP_FROM=${{ secrets.SMTP_FROM }}
+            SMTP_HOST=${{ secrets.SMTP_HOST }}
+            SMTP_PORT=${{ secrets.SMTP_PORT }}
+            SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}
+            SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+            REDIS_HOST=${{ secrets.REDIS_HOST }}
+            REDIS_PORT=${{ secrets.REDIS_PORT }}
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+            PAYSTACK_API_BASE_URL=${{ secrets.PAYSTACK_API_BASE_URL }}
+            PAYSTACK_SECRET_KEY=${{ secrets.PAYSTACK_SECRET_KEY }}
+            PAYSTACK_PUBLIC_KEY=${{ secrets.PAYSTACK_PUBLIC_KEY }}
+            STORE_NAME=${{ secrets.STORE_NAME }}
+            SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}
+            SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+            MAX_CACHE_ITEMS=${{ secrets.MAX_CACHE_ITEMS }}
+            EOF
+
+            # Secure .env with strict permissions
+            chmod 600 .env
+            echo "✓ .env created with secure permissions (600)"
+
+            # ── Docker login and pull ──────────────────────────────────────────────────
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
             # Pull the new image and restart only the app container.
             # postgres and redis keep running — no downtime on those.
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} \
               docker compose -f docker-compose.dev.yml pull app
+            echo "✓ Docker image pulled"
 
+            # ── Start app with new .env ────────────────────────────────────────────────
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} \
               docker compose -f docker-compose.dev.yml up -d --no-deps app
+            echo "✓ App started"
 
-            # Remove dangling images to keep disk clean
+            # ── Cleanup old images ─────────────────────────────────────────────────────
             docker image prune -f
 
             echo "Deploy complete. Running containers:"
