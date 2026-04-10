@@ -1,0 +1,60 @@
+name: Deploy — Dev EC2
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image (dev tag)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/florence-backend:dev
+          # Layer cache speeds up subsequent builds significantly
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy to dev EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEV_EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.DEV_EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd /home/ubuntu/florence-backend
+
+            # Authenticate with Docker Hub on the EC2
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+            # Pull the new image and restart only the app container.
+            # postgres and redis keep running — no downtime on those.
+            DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} \
+              docker compose -f docker-compose.dev.yml pull app
+
+            DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} \
+              docker compose -f docker-compose.dev.yml up -d --no-deps app
+
+            # Remove dangling images to keep disk clean
+            docker image prune -f
+
+            echo "Deploy complete. Running containers:"
+            docker compose -f docker-compose.dev.yml ps
