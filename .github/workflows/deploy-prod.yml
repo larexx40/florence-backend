@@ -28,8 +28,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/florence-backend:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/florence-backend:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/everything-florence-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/everything-florence-backend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

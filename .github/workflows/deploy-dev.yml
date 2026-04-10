@@ -27,7 +27,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/florence-backend:dev
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/everything-florence-backend:dev
           # Layer cache speeds up subsequent builds significantly
           cache-from: type=gha
           cache-to: type=gha,mode=max

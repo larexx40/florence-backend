@@ -38,7 +38,7 @@ services:
       - florence-net
 
   app:
-    image: ${DOCKERHUB_USERNAME}/florence-backend:dev
+    image: ${DOCKERHUB_USERNAME}/everything-florence-backend:dev
     container_name: florence-app-dev
     restart: unless-stopped
     env_file: .env
