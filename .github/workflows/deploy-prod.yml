@@ -10,18 +10,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout the code
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 2️⃣ Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # 3️⃣ Log in to Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # 4️⃣ Build and push image (latest + sha tags)
       - name: Build and push image (latest + sha tags)
         uses: docker/build-push-action@v5
         with:
@@ -33,6 +37,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # 5️⃣ Copy docker-compose.prod.yml to prod EC2
+      - name: Copy docker-compose.prod.yml to prod EC2
+        run: |
+          mkdir -p /tmp/ssh
+          printf '%s\n' "${{ secrets.PROD_EC2_SSH_KEY }}" > /tmp/ssh/id_rsa
+          chmod 600 /tmp/ssh/id_rsa
+          ssh -o StrictHostKeyChecking=no -i /tmp/ssh/id_rsa ubuntu@${{ secrets.PROD_EC2_HOST }} "mkdir -p /home/ubuntu/florence-backend"
+          scp -o StrictHostKeyChecking=no -i /tmp/ssh/id_rsa docker-compose.prod.yml ubuntu@${{ secrets.PROD_EC2_HOST }}:/home/ubuntu/florence-backend/docker-compose.prod.yml
+        env:
+          PROD_EC2_HOST: ${{ secrets.PROD_EC2_HOST }}
+
+      # 6️⃣ Deploy to production EC2
       - name: Deploy to production EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
