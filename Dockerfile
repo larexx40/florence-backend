@@ -21,6 +21,9 @@ FROM node:20-slim AS production
 WORKDIR /app
 ENV NODE_ENV=production
 
+# ✅ ADD THIS (FIXES PRISMA)
+RUN apk add --no-cache openssl
+
 # Copy only what we need
 COPY package.json yarn.lock ./
 
