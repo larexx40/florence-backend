@@ -1,86 +1,82 @@
+
 # ─────────────────────────────────────────────
-# 1. BASE IMAGE
+# 1. BASE (shared)
 # ─────────────────────────────────────────────
 FROM node:20-slim AS base
 
 WORKDIR /app
 
-# Install system dependencies (Prisma + native builds)
 RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+
+# ─────────────────────────────────────────────
+# 2. DEPENDENCIES
+# ─────────────────────────────────────────────
+FROM base AS deps
+
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile
+
+
+# ─────────────────────────────────────────────
+# 3. BUILD
+# ─────────────────────────────────────────────
+FROM base AS builder
+
+# install build tools ONLY here (not in final image)
+RUN apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-
-# ─────────────────────────────────────────────
-# 2. DEPENDENCIES (CACHED)
-# ─────────────────────────────────────────────
-FROM base AS deps
-
-COPY package.json yarn.lock ./
-
-RUN yarn install --frozen-lockfile
-
-
-# ─────────────────────────────────────────────
-# 3. BUILD STAGE
-# ─────────────────────────────────────────────
-FROM base AS builder
-
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Generate Prisma client
+# Prisma
 RUN npx prisma generate
 
-# Build NestJS app
+# Build app
 RUN yarn build
 
-# Install ONLY production deps (clean)
+# Keep only production deps
 RUN rm -rf node_modules
 RUN yarn install --frozen-lockfile --production
 
 
 # ─────────────────────────────────────────────
-# 4. PRODUCTION IMAGE
+# 4. FINAL (LIGHTWEIGHT)
 # ─────────────────────────────────────────────
-FROM node:20-slim AS production
+FROM node:20-slim
 
 WORKDIR /app
-ENV NODE_ENV=production
+ENV NODE_ENV=development
 
-# Runtime system deps (Prisma needs OpenSSL)
+# only runtime deps (SMALL)
 RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-
-# Copy production node_modules
+# copy only what is needed
 COPY --from=builder /app/node_modules ./node_modules
-
-# Copy built app
 COPY --from=builder /app/dist ./dist
 
-# Prisma runtime files
+# prisma runtime
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY prisma ./prisma
 
-# Copy package metadata (optional but good practice)
 COPY package.json ./
-
-# Entrypoint
 COPY entrypoint.sh ./entrypoint.sh
-RUN chmod +x ./entrypoint.sh
 
-# Security: non-root user
-RUN useradd -m appuser && chown -R appuser:appuser /app
-USER appuser
+RUN chmod +x ./entrypoint.sh
 
 EXPOSE 3000
 
-ENTRYPOINT ["./entrypoint.sh"]
+CMD ["./entrypoint.sh"]
