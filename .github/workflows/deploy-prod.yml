@@ -61,6 +61,7 @@ jobs:
 
             # ── Write .env from GitHub Secrets ──────────────────────────────────────
             cat > .env <<'EOF'
+            DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
             DATABASE_URL=${{ secrets.DATABASE_URL }}
             JWT_SECRET_ACCESS_KEY=${{ secrets.JWT_SECRET_ACCESS_KEY }}
             JWT_SECRET_REFRESH_KEY=${{ secrets.JWT_SECRET_REFRESH_KEY }}

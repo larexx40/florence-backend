@@ -1,70 +1,62 @@
+# syntax=docker/dockerfile:1.6
 
 # ─────────────────────────────────────────────
-# 1. BASE (shared)
+# 1. BASE
 # ─────────────────────────────────────────────
 FROM node:20-slim AS base
-
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
-    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-
 # ─────────────────────────────────────────────
-# 2. DEPENDENCIES
+# 2. DEPENDENCIES (CACHED LAYER)
 # ─────────────────────────────────────────────
 FROM base AS deps
 
 COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+
+RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
+    yarn install --frozen-lockfile
 
 
 # ─────────────────────────────────────────────
-# 3. BUILD
+# 3. BUILDER
 # ─────────────────────────────────────────────
 FROM base AS builder
-
-# install build tools ONLY here (not in final image)
-RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Prisma
+# Prisma generate
 RUN npx prisma generate
 
-# Build app
+# Build NestJS
 RUN yarn build
 
-# Keep only production deps
-RUN rm -rf node_modules
-RUN yarn install --frozen-lockfile --production
-
 
 # ─────────────────────────────────────────────
-# 4. FINAL (LIGHTWEIGHT)
+# 4. PRODUCTION RUNTIME (SMALL)
 # ─────────────────────────────────────────────
-FROM node:20-slim
-
+FROM node:20-slim AS production
 WORKDIR /app
-ENV NODE_ENV=development
 
-# only runtime deps (SMALL)
+ENV NODE_ENV=production
+
 RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
-    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# copy only what is needed
-COPY --from=builder /app/node_modules ./node_modules
+# install only production deps
+COPY package.json yarn.lock ./
+
+RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
+    yarn install --frozen-lockfile --production
+
+# app build output
 COPY --from=builder /app/dist ./dist
 
 # prisma runtime
@@ -72,11 +64,15 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY prisma ./prisma
 
-COPY package.json ./
+# entrypoint
 COPY entrypoint.sh ./entrypoint.sh
-
 RUN chmod +x ./entrypoint.sh
+
+# non-root user
+RUN useradd -m appuser
+RUN chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 3000
 
-CMD ["./entrypoint.sh"]
+ENTRYPOINT ["./entrypoint.sh"]
