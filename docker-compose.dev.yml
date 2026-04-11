@@ -13,7 +13,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-florence} -d ${DB_NAME:-florence_dev}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
     networks:
       - florence-net
 
@@ -32,13 +32,23 @@ services:
     container_name: florence-app-dev
     restart: unless-stopped
     env_file: .env
+
     ports:
       - "3000:3000"
+
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
+
+    # 🔥 HEALTHCHECK (critical for visibility)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
     networks:
       - florence-net
 

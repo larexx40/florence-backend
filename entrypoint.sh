@@ -3,61 +3,40 @@ set -e
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting container..."
 
-# ─────────────────────────────────────────────
-# 1. WAIT FOR DATABASE (ROBUST VERSION)
-# ─────────────────────────────────────────────
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Waiting for database..."
+# ─────────────────────────────
+# Wait for DB
+# ─────────────────────────────
+echo "Waiting for database..."
 
-TIMEOUT=60
-COUNTER=0
-
-until pg_isready -h postgres -p 5432 -U "$DB_USER" >/dev/null 2>&1; do
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] DB not ready... retrying"
+until nc -z postgres 5432; do
   sleep 2
-  COUNTER=$((COUNTER+2))
-
-  if [ "$COUNTER" -ge "$TIMEOUT" ]; then
-    echo "❌ Database connection timeout after ${TIMEOUT}s"
-    exit 1
-  fi
 done
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Database is ready"
+echo "✓ Database ready"
 
-# ─────────────────────────────────────────────
-# 2. RUN PRISMA MIGRATIONS
-# ─────────────────────────────────────────────
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Prisma migrations..."
+# ─────────────────────────────
+# Migration lock (IMPORTANT)
+# prevents double runs
+# ─────────────────────────────
+LOCK_FILE="/tmp/prisma_migration.lock"
 
-if npx prisma migrate deploy --schema prisma/schema.prisma; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Prisma migrations completed successfully"
+if [ -f "$LOCK_FILE" ]; then
+  echo "Migration already executed. Skipping."
 else
-  MIGRATION_ERROR=$?
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ Prisma migration failed with exit code $MIGRATION_ERROR"
+  echo "Running migrations..."
 
-  if [ -n "$SLACK_WEBHOOK_URL" ]; then
-    curl -X POST "$SLACK_WEBHOOK_URL" \
-      -H 'Content-Type: application/json' \
-      -d "{
-        \"text\": \"🚨 Prisma Migration Failed\",
-        \"attachments\": [{
-          \"color\": \"danger\",
-          \"fields\": [
-            {\"title\": \"Service\", \"value\": \"florence-backend\", \"short\": true},
-            {\"title\": \"Environment\", \"value\": \"$NODE_ENV\", \"short\": true},
-            {\"title\": \"Exit Code\", \"value\": \"$MIGRATION_ERROR\", \"short\": true},
-            {\"title\": \"Time\", \"value\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"short\": true}
-          ]
-        }]
-      }" 2>/dev/null || true
+  if npx prisma migrate deploy --schema prisma/schema.prisma; then
+    echo "✓ migrations complete"
+    touch "$LOCK_FILE"
+  else
+    echo "✗ migration failed"
+    exit 1
   fi
-
-  exit $MIGRATION_ERROR
 fi
 
-# ─────────────────────────────────────────────
-# 3. START APPLICATION
-# ─────────────────────────────────────────────
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting NestJS..."
+# ─────────────────────────────
+# Start app
+# ─────────────────────────────
+echo "Starting NestJS..."
 
 exec node dist/main.js

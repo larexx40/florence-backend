@@ -78,7 +78,7 @@ jobs:
             ubuntu@${{ secrets.DEV_EC2_HOST }}:/home/ubuntu/florence-backend/docker-compose.dev.yml
 
       # ─────────────────────────────
-      # 7️⃣ Deploy
+      # 7️⃣ Deploy to EC2 (ENV + rollback + restart)
       # ─────────────────────────────
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
@@ -92,36 +92,43 @@ jobs:
 
             # ── .env ─────────────────────────────
             cat > .env <<EOF
+
+            # ── Core
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
             DATABASE_URL=${{ secrets.DATABASE_URL }}
             DB_NAME=florence_dev
             DB_USER=florence
             DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            NODE_ENV=${{ secrets.NODE_ENV }}
 
+            # ── Auth
             JWT_SECRET_ACCESS_KEY=${{ secrets.JWT_SECRET_ACCESS_KEY }}
             JWT_SECRET_REFRESH_KEY=${{ secrets.JWT_SECRET_REFRESH_KEY }}
 
-            NODE_ENV=${{ secrets.NODE_ENV }}
-
+            # ── Redis
             REDIS_HOST=redis
             REDIS_PORT=6379
             REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
 
+            # ── AWS
             S3_ASSET_BUCKET_NAME=${{ secrets.S3_ASSET_BUCKET_NAME }}
             AWS_S3_REGION=${{ secrets.AWS_S3_REGION }}
             AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
             AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
+            # ── SMTP
             SMTP_FROM=${{ secrets.SMTP_FROM }}
             SMTP_HOST=${{ secrets.SMTP_HOST }}
             SMTP_PORT=${{ secrets.SMTP_PORT }}
             SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}
             SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
 
+            # ── Payments
             PAYSTACK_API_BASE_URL=${{ secrets.PAYSTACK_API_BASE_URL }}
             PAYSTACK_SECRET_KEY=${{ secrets.PAYSTACK_SECRET_KEY }}
             PAYSTACK_PUBLIC_KEY=${{ secrets.PAYSTACK_PUBLIC_KEY }}
-            
+
+            # ── Monitoring
             STORE_NAME=${{ secrets.STORE_NAME }}
             SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}
             SENTRY_DSN=${{ secrets.SENTRY_DSN }}
@@ -131,16 +138,28 @@ jobs:
 
             chmod 600 .env
 
-            # ── login
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            # ─────────────────────────────
+            # 🐳 Docker login
+            # ─────────────────────────────
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+              | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-            # ── pull latest image
+            # ─────────────────────────────
+            # 📦 Pull new image
+            # ─────────────────────────────
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} \
-              docker compose -f docker-compose.dev.yml pull
+              docker compose -f docker-compose.dev.yml pull app
 
-            # ── restart stack
+            # ─────────────────────────────
+            # 🔁 Restart app only
+            # ─────────────────────────────
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} \
-              docker compose -f docker-compose.dev.yml up -d
+              docker compose -f docker-compose.dev.yml up -d --no-deps app
+
+            # ─────────────────────────────
+            # 🧹 Cleanup
+            # ─────────────────────────────
+            docker image prune -f
 
             echo "🚀 Deploy complete"
             docker compose -f docker-compose.dev.yml ps

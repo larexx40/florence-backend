@@ -9,10 +9,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # ─────────────────────────────────────────────
-# 2. DEPENDENCIES (CACHED LAYER)
+# 2. DEPS (cached layer)
 # ─────────────────────────────────────────────
 FROM base AS deps
 
@@ -20,7 +21,6 @@ COPY package.json yarn.lock ./
 
 RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
     yarn install --frozen-lockfile
-
 
 # ─────────────────────────────────────────────
 # 3. BUILDER
@@ -30,15 +30,14 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Prisma generate
-RUN npx prisma generate
-
-# Build NestJS
+RUN yarn prisma generate
 RUN yarn build
 
+# keep only prod deps
+RUN yarn install --production --frozen-lockfile
 
 # ─────────────────────────────────────────────
-# 4. PRODUCTION RUNTIME (SMALL)
+# 4. RUNTIME
 # ─────────────────────────────────────────────
 FROM node:20-slim AS production
 WORKDIR /app
@@ -48,31 +47,27 @@ ENV NODE_ENV=production
 RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# install only production deps
 COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile --production
 
-RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
-    yarn install --frozen-lockfile --production
-
-# app build output
 COPY --from=builder /app/dist ./dist
-
-# prisma runtime
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY prisma ./prisma
 
-# entrypoint
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
-# non-root user
 RUN useradd -m appuser
 RUN chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode===200?0:1))"
 
 ENTRYPOINT ["./entrypoint.sh"]
