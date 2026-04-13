@@ -18,6 +18,7 @@ import { AdminModule } from './admin/admin.module';
 import { UsersModule } from './users/users.module';
 import { ImageModule } from './image/image.module';
 import { CheckoutModule } from './checkout/checkout.module';
+import { OrderModule } from './order/order.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { CheckoutModule } from './checkout/checkout.module';
     UsersModule,
     ImageModule,
     CheckoutModule,
+    OrderModule,
   ],
   controllers: [AppController],
   providers: [AppService, PrismaService],

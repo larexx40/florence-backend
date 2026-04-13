@@ -10,7 +10,7 @@ import {
 import { ShippingAddressResponseDto } from 'src/shipping-address/dto/response.dto';
 import { LogisticsCompanyResponseDto } from 'src/logistics/dto/response.dto';
 import { CheckoutService } from './checkout.service';
-import { ResolveShippingDto } from './dto/checkout.dto';
+import { PlaceOrderDto, ResolveShippingDto } from './dto/checkout.dto';
 
 @ApiTags('checkout')
 @ApiExtraModels(ShippingAddressResponseDto, LogisticsCompanyResponseDto)
@@ -39,6 +39,13 @@ export class CheckoutController {
         data: {
           type: 'object',
           properties: {
+            user: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', example: 'uuid' },
+                isNew: { type: 'boolean', example: false },
+              },
+            },
             addresses: {
               type: 'array',
               items: { $ref: getSchemaPath(ShippingAddressResponseDto) },
@@ -62,5 +69,42 @@ export class CheckoutController {
   @ApiResponse({ status: 404, description: 'addressId provided but not found for this user' })
   resolveShipping(@Body() dto: ResolveShippingDto) {
     return this.checkoutService.resolveShipping(dto);
+  }
+
+  @Post('place-order')
+  @ApiOperation({
+    summary: 'Place an order',
+    description: [
+      'Step 2 of checkout. Creates the order and returns payment info.',
+      '',
+      'Payment methods:',
+      '  • PAYSTACK — returns authorization_url and access_code for redirect',
+      '  • CASH_ON_DELIVERY — in-store pickup; no logistics required',
+      '',
+      'A customer account is automatically created if the email does not exist.',
+      'Supply either addressId (existing address) or an inline address object.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({
+    schema: {
+      properties: {
+        status: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Order ORD-20260413-AB12 placed successfully' },
+        data: {
+          type: 'object',
+          properties: {
+            order: { type: 'object', description: 'Created order with items and address' },
+            paystackUrl: { type: 'string', nullable: true, example: 'https://checkout.paystack.com/...' },
+            accessCode: { type: 'string', nullable: true, example: 'abc123xyz' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input, insufficient stock, or business rule violation' })
+  @ApiResponse({ status: 404, description: 'Address, variant, or logistics not found' })
+  @ApiResponse({ status: 500, description: 'Paystack initialization failed after order was created' })
+  placeOrder(@Body() dto: PlaceOrderDto) {
+    return this.checkoutService.placeOrder(dto);
   }
 }
