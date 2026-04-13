@@ -197,7 +197,6 @@ export class SeedService {
       if (!product) {
         const created = await this.productService.create({
           name: entry.product.name,
-          slug: entry.product.slug,
           description: entry.product.description ?? undefined,
           categoryId: category.id,
           minOrderQty: entry.product.minOrderQty ?? 1,
@@ -388,7 +387,6 @@ export class SeedService {
 
       await this.categoryService.create({
         name: collection.name,
-        slug: collection.slug,
         description: collection.description ?? undefined,
         imageUrl: collection.imageUrl ?? undefined,
       });

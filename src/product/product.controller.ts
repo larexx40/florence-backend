@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -21,6 +22,7 @@ import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
 import { Cacheable } from 'src/cache/cache.decorator';
 import { CacheInterceptor } from 'src/cache/cache.interceptor';
+import { AttachImageDto } from 'src/image/dto/image.dto';
 import { ProductService } from './product.service';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
 
@@ -93,5 +95,40 @@ export class ProductController {
   @ApiResponse({ status: 404, description: 'Product not found' })
   remove(@Param('id') id: string) {
     return this.productService.remove(id);
+  }
+
+  // ── Image management ─────────────────────────────────────────────────────────
+
+  @Post(':id/images')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Attach an image to a product (admin only)' })
+  @ApiParam({ name: 'id', description: 'Product UUID' })
+  @ApiResponse({ status: 201, description: 'Image attached' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Product or image not found' })
+  attachImage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AttachImageDto,
+  ) {
+    return this.productService.attachImage(id, dto);
+  }
+
+  @Delete(':id/images/:imageId')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Detach an image from a product (admin only)' })
+  @ApiParam({ name: 'id', description: 'Product UUID' })
+  @ApiParam({ name: 'imageId', description: 'Image UUID' })
+  @ApiResponse({ status: 200, description: 'Image detached' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Product or image link not found' })
+  detachImage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('imageId', ParseUUIDPipe) imageId: string,
+  ) {
+    return this.productService.detachImage(id, imageId);
   }
 }

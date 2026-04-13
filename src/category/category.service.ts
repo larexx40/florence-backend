@@ -9,6 +9,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
+import { generateUniqueSlug } from 'src/common/helpers/slug.helper';
 import {
   CategoryListResponseDto,
   CategoryQueryDto,
@@ -194,18 +195,19 @@ export class CategoryService {
   // ── Admin mutations ──────────────────────────────────────────────────────────
 
   async create(input: CreateCategoryDto): Promise<ApiResponse<CategoryResponseDto>> {
-    const slugTaken = await this.prisma.category.findUnique({ where: { slug: input.slug } });
-    if (slugTaken) throw new ConflictException(`Slug "${input.slug}" is already in use`);
-
     if (input.parentId) {
       const parent = await this.prisma.category.findUnique({ where: { id: input.parentId } });
       if (!parent) throw new NotFoundException('Parent category not found');
     }
 
+    const slug = await generateUniqueSlug(input.name, (s) =>
+      this.prisma.category.findUnique({ where: { slug: s } }).then(Boolean),
+    );
+
     const raw = await this.prisma.category.create({
       data: {
         name: input.name,
-        slug: input.slug,
+        slug,
         description: input.description ?? null,
         imageUrl: input.imageUrl ?? null,
         parentId: input.parentId ?? null,
@@ -224,11 +226,19 @@ export class CategoryService {
   async update(id: string, input: UpdateCategoryDto): Promise<ApiResponse<CategoryResponseDto>> {
     const category = await this.findOrThrow(id);
 
+    // explicit slug override: validate uniqueness
     if (input.slug && input.slug !== category.slug) {
       const slugTaken = await this.prisma.category.findFirst({
         where: { slug: input.slug, id: { not: id } },
       });
       if (slugTaken) throw new ConflictException(`Slug "${input.slug}" is already in use`);
+    }
+
+    // name changed without an explicit slug — regenerate automatically
+    if (input.name && input.name !== category.name && !input.slug) {
+      input.slug = await generateUniqueSlug(input.name, (s) =>
+        this.prisma.category.findFirst({ where: { slug: s, id: { not: id } } }).then(Boolean),
+      );
     }
 
     if (input.parentId) {

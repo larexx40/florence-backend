@@ -16,6 +16,7 @@ import { MailModule } from './mail/mail.module';
 import { SeedModule } from './seed/seed.module';
 import { AdminModule } from './admin/admin.module';
 import { UsersModule } from './users/users.module';
+import { ImageModule } from './image/image.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { UsersModule } from './users/users.module';
     SeedModule,
     AdminModule,
     UsersModule,
+    ImageModule,
   ],
   controllers: [AppController],
   providers: [AppService, PrismaService],

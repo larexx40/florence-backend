@@ -8,6 +8,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse, PaginatedData } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
+import { AttachImageDto } from 'src/image/dto/image.dto';
 import { CreateVariantDto, UpdateStockDto, UpdateVariantDto, VariantQueryDto } from './dto/variant.dto';
 
 const VARIANT_INCLUDE = {
@@ -268,5 +269,46 @@ export class VariantService {
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return { status: true, message: 'Variant deleted successfully', data: null };
+  }
+
+  // ── Variant image management ─────────────────────────────────────────────────
+
+  async attachImage(
+    productId: string,
+    variantId: string,
+    dto: AttachImageDto,
+  ): Promise<ApiResponse<any>> {
+    await this.findVariantOrThrow(productId, variantId);
+
+    const image = await this.prisma.image.findUnique({ where: { id: dto.imageId } });
+    if (!image) throw new NotFoundException('Image not found');
+
+    const link = await this.prisma.variantImage.upsert({
+      where: { variantId_imageId: { variantId, imageId: dto.imageId } },
+      create: { variantId, imageId: dto.imageId, position: dto.position ?? 0 },
+      update: { position: dto.position ?? 0 },
+      include: { image: true },
+    });
+
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return { status: true, message: 'Image attached to variant', data: link };
+  }
+
+  async detachImage(
+    productId: string,
+    variantId: string,
+    imageId: string,
+  ): Promise<ApiResponse<null>> {
+    await this.findVariantOrThrow(productId, variantId);
+
+    const link = await this.prisma.variantImage.findUnique({
+      where: { variantId_imageId: { variantId, imageId } },
+    });
+    if (!link) throw new NotFoundException('Image is not attached to this variant');
+
+    await this.prisma.variantImage.delete({ where: { variantId_imageId: { variantId, imageId } } });
+
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return { status: true, message: 'Image detached from variant', data: null };
   }
 }

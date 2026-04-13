@@ -1,7 +1,6 @@
 import {
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -9,6 +8,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse, PaginatedData } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
+import { generateUniqueSlug } from 'src/common/helpers/slug.helper';
+import { AttachImageDto } from 'src/image/dto/image.dto';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
 
 // ── Shared include shapes ────────────────────────────────────────────────────
@@ -59,8 +60,6 @@ const PRODUCT_DETAIL_INCLUDE = {
 
 @Injectable()
 export class ProductService {
-  private readonly logger = new Logger(ProductService.name, { timestamp: true });
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
@@ -150,9 +149,6 @@ export class ProductService {
   // ── Admin mutations ──────────────────────────────────────────────────────────
 
   async create(input: CreateProductDto): Promise<ApiResponse<any>> {
-    const slugTaken = await this.prisma.product.findUnique({ where: { slug: input.slug } });
-    if (slugTaken) throw new ConflictException(`Slug "${input.slug}" is already in use`);
-
     const category = await this.prisma.category.findUnique({ where: { id: input.categoryId } });
     if (!category) throw new NotFoundException('Category not found');
 
@@ -161,10 +157,14 @@ export class ProductService {
       if (!discount) throw new NotFoundException('Discount not found');
     }
 
+    const slug = await generateUniqueSlug(input.name, (s) =>
+      this.prisma.product.findUnique({ where: { slug: s } }).then(Boolean),
+    );
+
     const product = await this.prisma.product.create({
       data: {
         name: input.name,
-        slug: input.slug,
+        slug,
         description: input.description ?? null,
         categoryId: input.categoryId,
         minOrderQty: input.minOrderQty ?? 1,
@@ -187,11 +187,19 @@ export class ProductService {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException('Product not found');
 
+    // explicit slug override: validate uniqueness
     if (input.slug && input.slug !== product.slug) {
       const slugTaken = await this.prisma.product.findFirst({
         where: { slug: input.slug, id: { not: id } },
       });
       if (slugTaken) throw new ConflictException(`Slug "${input.slug}" is already in use`);
+    }
+
+    // name changed without an explicit slug — regenerate automatically
+    if (input.name && input.name !== product.name && !input.slug) {
+      input.slug = await generateUniqueSlug(input.name, (s) =>
+        this.prisma.product.findFirst({ where: { slug: s, id: { not: id } } }).then(Boolean),
+      );
     }
 
     if (input.categoryId) {
@@ -246,5 +254,37 @@ export class ProductService {
       message: 'Product deactivated successfully',
       data: null,
     };
+  }
+
+  // ── Product image management ─────────────────────────────────────────────────
+
+  async attachImage(productId: string, dto: AttachImageDto): Promise<ApiResponse<any>> {
+    const product = await this.prisma.product.findUnique({ where: { id: productId } });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const image = await this.prisma.image.findUnique({ where: { id: dto.imageId } });
+    if (!image) throw new NotFoundException('Image not found');
+
+    const link = await this.prisma.productImage.upsert({
+      where: { productId_imageId: { productId, imageId: dto.imageId } },
+      create: { productId, imageId: dto.imageId, position: dto.position ?? 0 },
+      update: { position: dto.position ?? 0 },
+      include: { image: true },
+    });
+
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return { status: true, message: 'Image attached to product', data: link };
+  }
+
+  async detachImage(productId: string, imageId: string): Promise<ApiResponse<null>> {
+    const link = await this.prisma.productImage.findUnique({
+      where: { productId_imageId: { productId, imageId } },
+    });
+    if (!link) throw new NotFoundException('Image is not attached to this product');
+
+    await this.prisma.productImage.delete({ where: { productId_imageId: { productId, imageId } } });
+
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return { status: true, message: 'Image detached from product', data: null };
   }
 }

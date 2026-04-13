@@ -70,11 +70,6 @@ export class CreateCategoryDto {
   @IsString()
   name: string;
 
-  @ApiProperty({ example: 'bags' })
-  @IsNotEmpty({ message: 'Slug is required' })
-  @IsString()
-  slug: string;
-
   @ApiPropertyOptional({ example: 'All types of wholesale bags' })
   @IsOptional()
   @IsString()

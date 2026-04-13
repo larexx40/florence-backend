@@ -63,11 +63,6 @@ export class CreateProductDto {
   @IsString()
   name: string;
 
-  @ApiProperty({ example: 'bflo-226' })
-  @IsNotEmpty({ message: 'Slug is required' })
-  @IsString()
-  slug: string;
-
   @ApiPropertyOptional({ example: 'Premium quality bag in multiple colours' })
   @IsOptional()
   @IsString()

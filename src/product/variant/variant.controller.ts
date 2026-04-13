@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -21,6 +22,7 @@ import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
 import { Cacheable } from 'src/cache/cache.decorator';
 import { CacheInterceptor } from 'src/cache/cache.interceptor';
+import { AttachImageDto } from 'src/image/dto/image.dto';
 import { VariantService } from './variant.service';
 import {
   CreateVariantDto,
@@ -114,5 +116,44 @@ export class VariantController {
   @ApiResponse({ status: 404, description: 'Variant not found' })
   remove(@Param('productId') productId: string, @Param('variantId') variantId: string) {
     return this.variantService.remove(productId, variantId);
+  }
+
+  // ── Image management ─────────────────────────────────────────────────────────
+
+  @Post(':variantId/images')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Attach an image to a variant (admin only)' })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiParam({ name: 'variantId', description: 'Variant UUID' })
+  @ApiResponse({ status: 201, description: 'Image attached' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Variant or image not found' })
+  attachImage(
+    @Param('productId') productId: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+    @Body() dto: AttachImageDto,
+  ) {
+    return this.variantService.attachImage(productId, variantId, dto);
+  }
+
+  @Delete(':variantId/images/:imageId')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Detach an image from a variant (admin only)' })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiParam({ name: 'variantId', description: 'Variant UUID' })
+  @ApiParam({ name: 'imageId', description: 'Image UUID' })
+  @ApiResponse({ status: 200, description: 'Image detached' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Variant or image link not found' })
+  detachImage(
+    @Param('productId') productId: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+    @Param('imageId', ParseUUIDPipe) imageId: string,
+  ) {
+    return this.variantService.detachImage(productId, variantId, imageId);
   }
 }
