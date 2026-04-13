@@ -11,6 +11,6 @@ import { VariantService } from './variant/variant.service';
   imports: [PrismaModule],
   controllers: [ProductController, OptionController, VariantController],
   providers: [ProductService, OptionService, VariantService],
-  exports: [ProductService],
+  exports: [ProductService, OptionService, VariantService],
 })
 export class ProductModule {}

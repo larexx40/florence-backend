@@ -23,7 +23,8 @@ export interface LoginResponseData {
     user: User;
     accessToken: string;
     refreshToken: string;
-    isVerified: boolean
+    isVerified: boolean,
+    isProfileComplete: boolean;
 }
 
 export interface CheckoutData{

@@ -93,6 +93,8 @@ model User {
   storeCreditBalance Decimal   @default(0) @map("store_credit_balance") @db.Decimal(12, 2)
   fcmToken           String?   @map("fcm_token")
   lastLogin          DateTime? @map("last_login")
+  // tracks whether admin has sent first-time login credentials — can only be triggered once
+  loginDetailsSent   Boolean   @default(false) @map("login_details_sent")
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 

@@ -13,6 +13,9 @@ import { LocationModule } from './location/location.module';
 import { LogisticsModule } from './logistics/logistics.module';
 import { ShippingAddressModule } from './shipping-address/shipping-address.module';
 import { MailModule } from './mail/mail.module';
+import { SeedModule } from './seed/seed.module';
+import { AdminModule } from './admin/admin.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -36,6 +39,9 @@ import { MailModule } from './mail/mail.module';
     LogisticsModule,
     ShippingAddressModule,
     MailModule,
+    SeedModule,
+    AdminModule,
+    UsersModule,
   ],
   controllers: [AppController],
   providers: [AppService, PrismaService],
