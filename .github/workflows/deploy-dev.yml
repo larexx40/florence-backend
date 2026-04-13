@@ -133,6 +133,9 @@ jobs:
             SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}
             SENTRY_DSN=${{ secrets.SENTRY_DSN }}
             MAX_CACHE_ITEMS=${{ secrets.MAX_CACHE_ITEMS }}
+
+            # ── System
+            PORT=3000
             SEED_API_KEY=${{ secrets.SEED_API_KEY }}
 
             EOF

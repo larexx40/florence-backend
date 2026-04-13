@@ -61,32 +61,52 @@ jobs:
 
             # ── Write .env from GitHub Secrets ──────────────────────────────────────
             cat > .env <<'EOF'
+            
+            # ── Core
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
             DATABASE_URL=${{ secrets.DATABASE_URL }}
+            DB_NAME=florence_dev
+            DB_USER=florence
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            NODE_ENV=${{ secrets.NODE_ENV }}
+
+            # ── Auth
             JWT_SECRET_ACCESS_KEY=${{ secrets.JWT_SECRET_ACCESS_KEY }}
             JWT_SECRET_REFRESH_KEY=${{ secrets.JWT_SECRET_REFRESH_KEY }}
-            ACCESS_TOKEN_TTL=${{ secrets.ACCESS_TOKEN_TTL }}
-            REFRESH_TOKEN_TTL=${{ secrets.REFRESH_TOKEN_TTL }}
-            NODE_ENV=${{ secrets.NODE_ENV }}
+
+            # ── Redis
+            REDIS_HOST=redis
+            REDIS_PORT=6379
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+
+            # ── AWS
             S3_ASSET_BUCKET_NAME=${{ secrets.S3_ASSET_BUCKET_NAME }}
             AWS_S3_REGION=${{ secrets.AWS_S3_REGION }}
             AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
             AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+            # ── SMTP
             SMTP_FROM=${{ secrets.SMTP_FROM }}
             SMTP_HOST=${{ secrets.SMTP_HOST }}
             SMTP_PORT=${{ secrets.SMTP_PORT }}
             SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}
             SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
-            REDIS_HOST=${{ secrets.REDIS_HOST }}
-            REDIS_PORT=${{ secrets.REDIS_PORT }}
-            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+
+            # ── Payments
             PAYSTACK_API_BASE_URL=${{ secrets.PAYSTACK_API_BASE_URL }}
             PAYSTACK_SECRET_KEY=${{ secrets.PAYSTACK_SECRET_KEY }}
             PAYSTACK_PUBLIC_KEY=${{ secrets.PAYSTACK_PUBLIC_KEY }}
+
+            # ── Monitoring
             STORE_NAME=${{ secrets.STORE_NAME }}
             SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}
             SENTRY_DSN=${{ secrets.SENTRY_DSN }}
             MAX_CACHE_ITEMS=${{ secrets.MAX_CACHE_ITEMS }}
+
+            # ── System
+            PORT=3000
+            SEED_API_KEY=${{ secrets.SEED_API_KEY }}
+            
             EOF
 
             # Secure .env with strict permissions

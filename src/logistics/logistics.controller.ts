@@ -4,6 +4,7 @@ import {
     Delete,
     Get,
     Param,
+    ParseUUIDPipe,
     Patch,
     Post,
     Query,
@@ -12,11 +13,13 @@ import {
 } from '@nestjs/common';
 import {
     ApiBearerAuth,
+    ApiExtraModels,
+    ApiOkResponse,
     ApiOperation,
     ApiParam,
-    ApiQuery,
     ApiResponse,
     ApiTags,
+    getSchemaPath,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
@@ -29,8 +32,20 @@ import {
     LogisticsQueryDto,
     UpdateLogisticsDto,
 } from './dto/logistics.dto';
+import {
+    CoverageResponseDto,
+    LogisticsCompanyResponseDto,
+    LogisticsListResponseDto,
+} from './dto/response.dto';
+import { PaginatedDataDto } from 'src/common/types/response.type';
 
 @ApiTags('logistics')
+@ApiExtraModels(
+    LogisticsCompanyResponseDto,
+    LogisticsListResponseDto,
+    CoverageResponseDto,
+    PaginatedDataDto,
+)
 @Controller('logistics')
 export class LogisticsController {
     constructor(private readonly logisticsService: LogisticsService) {}
@@ -40,12 +55,39 @@ export class LogisticsController {
     @Get('by-city/:cityId')
     @UseInterceptors(CacheInterceptor)
     @Cacheable(3600)
-    @ApiOperation({ summary: 'Get logistics companies available in a city' })
+    @ApiOperation({ summary: 'Get active logistics companies that cover a specific city' })
     @ApiParam({ name: 'cityId', description: 'City UUID' })
-    @ApiResponse({ status: 200, description: 'Logistics companies fetched successfully' })
+    @ApiOkResponse({
+        schema: {
+            properties: {
+                status: { type: 'boolean', example: true },
+                message: { type: 'string', example: 'Logistics companies available in Lagos Island, Lagos' },
+                data: { type: 'array', items: { $ref: getSchemaPath(LogisticsCompanyResponseDto) } },
+            },
+        },
+    })
     @ApiResponse({ status: 404, description: 'City not found' })
-    getByCity(@Param('cityId') cityId: string) {
+    getByCity(@Param('cityId', ParseUUIDPipe) cityId: string) {
         return this.logisticsService.getByCity(cityId);
+    }
+
+    @Get('by-state/:stateId')
+    @UseInterceptors(CacheInterceptor)
+    @Cacheable(3600)
+    @ApiOperation({ summary: 'Get active logistics companies that cover any city in a state' })
+    @ApiParam({ name: 'stateId', description: 'State UUID' })
+    @ApiOkResponse({
+        schema: {
+            properties: {
+                status: { type: 'boolean', example: true },
+                message: { type: 'string', example: 'Logistics companies available in Lagos' },
+                data: { type: 'array', items: { $ref: getSchemaPath(LogisticsCompanyResponseDto) } },
+            },
+        },
+    })
+    @ApiResponse({ status: 404, description: 'State not found' })
+    getByState(@Param('stateId', ParseUUIDPipe) stateId: string) {
+        return this.logisticsService.getByState(stateId);
     }
 
     // ── Admin: company CRUD ──────────────────────────────────────────────────────
@@ -53,14 +95,18 @@ export class LogisticsController {
     @Get()
     @UseGuards(AuthGuard, AdminGuard)
     @ApiBearerAuth()
-    @ApiOperation({ summary: 'List all logistics companies (admin only)' })
-    @ApiQuery({ name: 'page', required: false, example: '1' })
-    @ApiQuery({ name: 'limit', required: false, example: '20' })
-    @ApiQuery({ name: 'search', required: false, example: 'swift' })
-    @ApiQuery({ name: 'includeInactive', required: false, example: false })
-    @ApiResponse({ status: 200, description: 'Logistics companies fetched successfully' })
+    @ApiOperation({ summary: 'List all logistics companies with search and pagination (admin only)' })
+    @ApiOkResponse({
+        schema: {
+            properties: {
+                status: { type: 'boolean', example: true },
+                message: { type: 'string', example: 'Logistics companies fetched successfully' },
+                data: { $ref: getSchemaPath(LogisticsListResponseDto) },
+            },
+        },
+    })
     @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+    @ApiResponse({ status: 403, description: 'Admin access required' })
     getAll(@Query() query: LogisticsQueryDto) {
         return this.logisticsService.getAll(query);
     }
@@ -70,11 +116,19 @@ export class LogisticsController {
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Get a logistics company by ID (admin only)' })
     @ApiParam({ name: 'id', description: 'Logistics company UUID' })
-    @ApiResponse({ status: 200, description: 'Logistics company fetched successfully' })
+    @ApiOkResponse({
+        schema: {
+            properties: {
+                status: { type: 'boolean', example: true },
+                message: { type: 'string', example: 'Logistics company fetched successfully' },
+                data: { $ref: getSchemaPath(LogisticsCompanyResponseDto) },
+            },
+        },
+    })
     @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+    @ApiResponse({ status: 403, description: 'Admin access required' })
     @ApiResponse({ status: 404, description: 'Logistics company not found' })
-    getById(@Param('id') id: string) {
+    getById(@Param('id', ParseUUIDPipe) id: string) {
         return this.logisticsService.getById(id);
     }
 
@@ -82,10 +136,18 @@ export class LogisticsController {
     @UseGuards(AuthGuard, AdminGuard)
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Create a logistics company (admin only)' })
-    @ApiResponse({ status: 201, description: 'Logistics company created successfully' })
+    @ApiOkResponse({
+        schema: {
+            properties: {
+                status: { type: 'boolean', example: true },
+                message: { type: 'string', example: 'Logistics company created successfully' },
+                data: { $ref: getSchemaPath(LogisticsCompanyResponseDto) },
+            },
+        },
+    })
     @ApiResponse({ status: 400, description: 'Invalid input' })
     @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+    @ApiResponse({ status: 403, description: 'Admin access required' })
     @ApiResponse({ status: 409, description: 'Company name already exists' })
     create(@Body() dto: CreateLogisticsDto) {
         return this.logisticsService.create(dto);
@@ -96,12 +158,20 @@ export class LogisticsController {
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Update a logistics company (admin only)' })
     @ApiParam({ name: 'id', description: 'Logistics company UUID' })
-    @ApiResponse({ status: 200, description: 'Logistics company updated successfully' })
+    @ApiOkResponse({
+        schema: {
+            properties: {
+                status: { type: 'boolean', example: true },
+                message: { type: 'string', example: 'Logistics company updated successfully' },
+                data: { $ref: getSchemaPath(LogisticsCompanyResponseDto) },
+            },
+        },
+    })
     @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+    @ApiResponse({ status: 403, description: 'Admin access required' })
     @ApiResponse({ status: 404, description: 'Logistics company not found' })
     @ApiResponse({ status: 409, description: 'Company name already taken' })
-    update(@Param('id') id: string, @Body() dto: UpdateLogisticsDto) {
+    update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateLogisticsDto) {
         return this.logisticsService.update(id, dto);
     }
 
@@ -110,11 +180,19 @@ export class LogisticsController {
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Delete or deactivate a logistics company (admin only)' })
     @ApiParam({ name: 'id', description: 'Logistics company UUID' })
-    @ApiResponse({ status: 200, description: 'Logistics company deleted or deactivated' })
+    @ApiOkResponse({
+        schema: {
+            properties: {
+                status: { type: 'boolean', example: true },
+                message: { type: 'string', example: 'Logistics company deleted successfully' },
+                data: { type: 'object', nullable: true, example: null },
+            },
+        },
+    })
     @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+    @ApiResponse({ status: 403, description: 'Admin access required' })
     @ApiResponse({ status: 404, description: 'Logistics company not found' })
-    remove(@Param('id') id: string) {
+    remove(@Param('id', ParseUUIDPipe) id: string) {
         return this.logisticsService.remove(id);
     }
 
@@ -125,13 +203,21 @@ export class LogisticsController {
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Add a coverage area to a logistics company (admin only)' })
     @ApiParam({ name: 'id', description: 'Logistics company UUID' })
-    @ApiResponse({ status: 201, description: 'Coverage area added successfully' })
+    @ApiOkResponse({
+        schema: {
+            properties: {
+                status: { type: 'boolean', example: true },
+                message: { type: 'string', example: 'Coverage area added successfully' },
+                data: { $ref: getSchemaPath(CoverageResponseDto) },
+            },
+        },
+    })
     @ApiResponse({ status: 400, description: 'Invalid input' })
     @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
-    @ApiResponse({ status: 404, description: 'Logistics company or city not found' })
+    @ApiResponse({ status: 403, description: 'Admin access required' })
+    @ApiResponse({ status: 404, description: 'Logistics company, city, or LGA not found' })
     @ApiResponse({ status: 409, description: 'Coverage for this city already exists' })
-    addCoverage(@Param('id') id: string, @Body() dto: AddCoverageDto) {
+    addCoverage(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddCoverageDto) {
         return this.logisticsService.addCoverage(id, dto);
     }
 
@@ -141,11 +227,22 @@ export class LogisticsController {
     @ApiOperation({ summary: 'Remove a coverage area from a logistics company (admin only)' })
     @ApiParam({ name: 'id', description: 'Logistics company UUID' })
     @ApiParam({ name: 'coverageId', description: 'Coverage UUID' })
-    @ApiResponse({ status: 200, description: 'Coverage area removed successfully' })
+    @ApiOkResponse({
+        schema: {
+            properties: {
+                status: { type: 'boolean', example: true },
+                message: { type: 'string', example: 'Coverage area removed successfully' },
+                data: { type: 'object', nullable: true, example: null },
+            },
+        },
+    })
     @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+    @ApiResponse({ status: 403, description: 'Admin access required' })
     @ApiResponse({ status: 404, description: 'Coverage area not found' })
-    removeCoverage(@Param('id') id: string, @Param('coverageId') coverageId: string) {
+    removeCoverage(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Param('coverageId', ParseUUIDPipe) coverageId: string,
+    ) {
         return this.logisticsService.removeCoverage(id, coverageId);
     }
 }

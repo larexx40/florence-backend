@@ -17,6 +17,7 @@ import { SeedModule } from './seed/seed.module';
 import { AdminModule } from './admin/admin.module';
 import { UsersModule } from './users/users.module';
 import { ImageModule } from './image/image.module';
+import { CheckoutModule } from './checkout/checkout.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { ImageModule } from './image/image.module';
     AdminModule,
     UsersModule,
     ImageModule,
+    CheckoutModule,
   ],
   controllers: [AppController],
   providers: [AppService, PrismaService],

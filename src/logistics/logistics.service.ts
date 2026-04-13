@@ -203,7 +203,7 @@ export class LogisticsService {
         return { status: true, message: 'Coverage area removed successfully', data: null };
     }
 
-    // ── User/Public: fetch by city ────────────────────────────────────────────────
+    // ── Public: fetch by city / state ────────────────────────────────────────────
 
     async getByCity(cityId: string): Promise<ApiResponse<any[]>> {
         const city = await this.prisma.city.findUnique({
@@ -229,6 +229,39 @@ export class LogisticsService {
         return {
             status: true,
             message: `Logistics companies available in ${city.name}, ${city.state.name}`,
+            data: companies,
+        };
+    }
+
+    async getByState(stateId: string): Promise<ApiResponse<any[]>> {
+        const state = await this.prisma.state.findUnique({ where: { id: stateId } });
+        if (!state) throw new NotFoundException('State not found');
+
+        // find all city IDs in this state
+        const cities = await this.prisma.city.findMany({
+            where: { stateId },
+            select: { id: true },
+        });
+        const cityIds = cities.map((c) => c.id);
+
+        const companies = await this.prisma.logisticsCompany.findMany({
+            where: {
+                isActive: true,
+                coverages: { some: { cityId: { in: cityIds } } },
+            },
+            include: {
+                coverages: {
+                    where: { cityId: { in: cityIds } },
+                    include: COVERAGE_INCLUDE,
+                },
+                _count: { select: { orders: true } },
+            },
+            orderBy: { name: 'asc' },
+        });
+
+        return {
+            status: true,
+            message: `Logistics companies available in ${state.name}`,
             data: companies,
         };
     }
