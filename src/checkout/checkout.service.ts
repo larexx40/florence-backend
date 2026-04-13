@@ -30,6 +30,8 @@ const VARIANT_ORDER_INCLUDE = {
   product: {
     include: {
       discount: { include: { tiers: true } },
+      // needed to enforce prerequisite-variant gate at checkout
+      prerequisiteVariant: { select: { id: true, sku: true } },
     },
   },
   optionValues: {
@@ -274,6 +276,14 @@ export class CheckoutService {
       }
       if (variant.stockQty < item.quantity) {
         throw new BadRequestException(`Insufficient stock for variant ${item.variantId} — available: ${variant.stockQty}`);
+      }
+
+      // If the product requires a prerequisite variant, it must appear elsewhere in this order
+      const prereq = variant.product.prerequisiteVariant;
+      if (prereq && !variantIds.includes(prereq.id)) {
+        throw new BadRequestException(
+          `"${variant.product.name}" requires variant ${prereq.sku} to be included in the same order`,
+        );
       }
     }
 
