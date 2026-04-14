@@ -23,13 +23,17 @@ export class CacheService implements OnModuleDestroy {
         this.client.on('error', (err) => this.logger.error(`Redis error: ${err.message}`));
     }
 
+    private getErrorMessage(err: unknown): string {
+        return err instanceof Error ? err.message : String(err);
+    }
+
     async get<T>(key: string): Promise<T | null> {
         try {
             const raw = await this.client.get(key);
             if (!raw) return null;
             return JSON.parse(raw) as T;
         } catch (err) {
-            this.logger.warn(`Cache GET failed for "${key}": ${err.message}`);
+            this.logger.warn(`Cache GET failed for "${key}": ${this.getErrorMessage(err)}`);
             return null;
         }
     }
@@ -38,7 +42,7 @@ export class CacheService implements OnModuleDestroy {
         try {
             await this.client.set(key, JSON.stringify(value), 'EX', ttlSeconds);
         } catch (err) {
-            this.logger.warn(`Cache SET failed for "${key}": ${err.message}`);
+            this.logger.warn(`Cache SET failed for "${key}": ${this.getErrorMessage(err)}`);
         }
     }
 
@@ -46,7 +50,7 @@ export class CacheService implements OnModuleDestroy {
         try {
             await this.client.del(key);
         } catch (err) {
-            this.logger.warn(`Cache DEL failed for "${key}": ${err.message}`);
+            this.logger.warn(`Cache DEL failed for "${key}": ${this.getErrorMessage(err)}`);
         }
     }
 
@@ -78,7 +82,9 @@ export class CacheService implements OnModuleDestroy {
                 this.logger.log(`Invalidated ${keysToDelete.length} cache key(s) matching "${pattern}"`);
             }
         } catch (err) {
-            this.logger.warn(`Cache invalidation failed for pattern "${pattern}": ${err.message}`);
+            this.logger.warn(
+                `Cache invalidation failed for pattern "${pattern}": ${this.getErrorMessage(err)}`,
+            );
         }
     }
 
