@@ -26,6 +26,7 @@ import { CacheInterceptor } from 'src/cache/cache.interceptor';
 import { AttachImageDto } from 'src/image/dto/image.dto';
 import { VariantService } from './variant.service';
 import {
+  BulkCreateVariantsDto,
   CreateVariantDto,
   UpdateStockDto,
   UpdateVariantDto,
@@ -52,6 +53,24 @@ export class VariantController {
   }
 
   // ── Admin ────────────────────────────────────────────────────────────────────
+
+  @Post('bulk')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Create multiple variants for a product in one atomic call (admin only)',
+    description: 'All variants are created in a single transaction — if any one fails, none are saved.',
+  })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiResponse({ status: 201, description: 'All variants created' })
+  @ApiResponse({ status: 400, description: 'Invalid option value IDs, duplicate option dimension, or duplicate combination within the request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Product not found or option value IDs not on this product' })
+  @ApiResponse({ status: 409, description: 'One or more SKUs already in use or combination already exists' })
+  createBulk(@Param('productId') productId: string, @Body() input: BulkCreateVariantsDto) {
+    return this.variantService.createBulk(productId, input);
+  }
 
   @Post()
   @UseGuards(AuthGuard, AdminGuard)

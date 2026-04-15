@@ -9,7 +9,7 @@ import { ApiResponse, PaginatedData } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
 import { AttachImageDto } from 'src/image/dto/image.dto';
-import { CreateVariantDto, UpdateStockDto, UpdateVariantDto, VariantQueryDto } from './dto/variant.dto';
+import { BulkCreateVariantsDto, CreateVariantDto, UpdateStockDto, UpdateVariantDto, VariantQueryDto } from './dto/variant.dto';
 
 // ── Shared include ────────────────────────────────────────────────────────────
 
@@ -207,6 +207,146 @@ export class VariantService {
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return { status: true, message: 'Variant created successfully', data: variant };
+  }
+
+  async createBulk(productId: string, input: BulkCreateVariantsDto): Promise<ApiResponse<any[]>> {
+    await this.findProductOrThrow(productId);
+
+    // ── Pre-transaction validation ──────────────────────────────────────────
+
+    // Reject duplicate SKUs within the request
+    const requestSkus = input.variants.map((v) => v.sku);
+    if (new Set(requestSkus).size !== requestSkus.length) {
+      throw new BadRequestException('Duplicate SKU within the request — each variant must have a unique SKU');
+    }
+
+    // Reject any SKU already in the database
+    const takenSkus = await this.prisma.productVariant.findMany({
+      where: { sku: { in: requestSkus } },
+      select: { sku: true },
+    });
+    if (takenSkus.length > 0) {
+      throw new ConflictException(
+        `SKU(s) already in use: ${takenSkus.map((r) => r.sku).join(', ')}`,
+      );
+    }
+
+    // Collect all POV IDs referenced across all variants, validate they belong to this product
+    const allPovIds = [...new Set(input.variants.flatMap((v) => v.productOptionValueIds))];
+    const povRows = await this.prisma.productOptionValue.findMany({
+      where: { id: { in: allPovIds }, productOption: { productId } },
+      include: {
+        productOption: {
+          include: { categoryOption: { select: { id: true, name: true } } },
+        },
+      },
+    });
+
+    const povMap = new Map(povRows.map((r) => [r.id, r]));
+    const missingIds = allPovIds.filter((id) => !povMap.has(id));
+    if (missingIds.length) {
+      throw new BadRequestException(
+        `These ProductOptionValue IDs are not declared for this product: ${missingIds.join(', ')}`,
+      );
+    }
+
+    // Per-variant: validate no duplicate option dimensions + build title
+    const variantMeta: Array<{ title: string; povIds: string[] }> = [];
+    for (const variantInput of input.variants) {
+      if (!variantInput.productOptionValueIds.length) {
+        throw new BadRequestException(`Variant SKU "${variantInput.sku}": at least one productOptionValueId is required`);
+      }
+
+      const usedOptions = new Set<string>();
+      for (const id of variantInput.productOptionValueIds) {
+        const row = povMap.get(id)!;
+        const catOptionId = row.productOption.categoryOptionId;
+        if (usedOptions.has(catOptionId)) {
+          throw new BadRequestException(
+            `Variant SKU "${variantInput.sku}": two values from the same option (${row.productOption.categoryOption.name})`,
+          );
+        }
+        usedOptions.add(catOptionId);
+      }
+
+      const title =
+        variantInput.productOptionValueIds
+          .map((id) => povMap.get(id)!)
+          .sort((a, b) => a.productOption.categoryOption.name.localeCompare(b.productOption.categoryOption.name))
+          .map((r) => r.value)
+          .join(' / ') || 'Default';
+
+      variantMeta.push({ title, povIds: variantInput.productOptionValueIds });
+    }
+
+    // Check for duplicate option combinations within the request
+    const seenCombos = new Set<string>();
+    for (let i = 0; i < input.variants.length; i += 1) {
+      const key = [...variantMeta[i].povIds].sort().join(',');
+      if (seenCombos.has(key)) {
+        throw new BadRequestException(
+          `Variant SKU "${input.variants[i].sku}": duplicate option combination in the same request`,
+        );
+      }
+      seenCombos.add(key);
+    }
+
+    // Check for duplicate combinations against existing variants
+    const existingVariants = await this.prisma.productVariant.findMany({
+      where: { productId },
+      include: { variantOptionValues: { select: { productOptionValueId: true } } },
+    });
+    for (let i = 0; i < input.variants.length; i += 1) {
+      const sortedNew = [...variantMeta[i].povIds].sort();
+      const dupe = existingVariants.find((v) => {
+        const sortedExisting = v.variantOptionValues.map((ov) => ov.productOptionValueId).sort();
+        return (
+          sortedExisting.length === sortedNew.length &&
+          sortedExisting.every((id, j) => id === sortedNew[j])
+        );
+      });
+      if (dupe) {
+        throw new ConflictException(
+          `Variant SKU "${input.variants[i].sku}": option combination already exists on this product`,
+        );
+      }
+    }
+
+    // ── Atomic write ────────────────────────────────────────────────────────
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const results: any[] = [];
+
+      for (let i = 0; i < input.variants.length; i += 1) {
+        const v = input.variants[i];
+        const { title, povIds } = variantMeta[i];
+
+        const variant = await tx.productVariant.create({
+          data: {
+            productId,
+            sku: v.sku,
+            title,
+            price: v.price,
+            compareAtPrice: v.compareAtPrice ?? null,
+            stockQty: v.stockQty ?? 0,
+            weightKg: v.weightKg ?? null,
+            minQty: v.minQty ?? null,
+            maxQty: v.maxQty ?? null,
+            variantOptionValues: {
+              create: povIds.map((productOptionValueId) => ({ productOptionValueId })),
+            },
+          },
+          include: VARIANT_INCLUDE,
+        });
+
+        results.push(variant);
+      }
+
+      return results;
+    });
+
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return { status: true, message: 'Variants created successfully', data: created };
   }
 
   async update(

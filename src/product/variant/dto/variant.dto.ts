@@ -1,5 +1,6 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -11,6 +12,7 @@ import {
   IsString,
   IsUUID,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -147,4 +149,31 @@ export class UpdateStockDto {
   @IsInt()
   @Min(0)
   stockQty: number;
+}
+
+export class BulkCreateVariantsDto {
+  @ApiProperty({
+    type: [CreateVariantDto],
+    description: 'Array of variants to create atomically — if any one fails, none are saved.',
+    example: [
+      {
+        sku: 'BFLO-BLACK-36',
+        price: 14000,
+        compareAtPrice: 16000,
+        stockQty: 50,
+        productOptionValueIds: ['<color-pov-uuid>', '<size-pov-uuid>'],
+      },
+      {
+        sku: 'BFLO-BLACK-37',
+        price: 14000,
+        stockQty: 30,
+        productOptionValueIds: ['<color-pov-uuid>', '<size-pov-uuid-37>'],
+      },
+    ],
+  })
+  @IsArray()
+  @ArrayMinSize(1, { message: 'At least one variant is required' })
+  @ValidateNested({ each: true })
+  @Type(() => CreateVariantDto)
+  variants: CreateVariantDto[];
 }
