@@ -1,201 +1,189 @@
-
-import { Injectable, BadRequestException } from '@nestjs/common';
-import { ImageType } from 'src/common/constants/enum';
-import { generateId } from 'src/common/helpers/helper';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { uploadFileToAWSS3 } from 'src/common/helpers/s3.upload.helper';
+import { ApiResponse } from 'src/common/types';
 
-interface FileUpload {
-    buffer: Buffer;
-    originalname: string;
-    mimetype: string;
-    size: number;
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface SingleUploadResult {
+  url: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
 }
 
-interface UploadResult {
-    url: string;
-    originalname: string;
-    size: number;
-    success: boolean;
-    error?: string;
+export interface MultiUploadResult {
+  successful: SingleUploadResult[];
+  failed: Array<{ originalName: string; reason: string }>;
+  summary: { total: number; successful: number; failed: number };
 }
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const ALLOWED_FILE_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+];
+
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 20 * 1024 * 1024;  // 20 MB
+const MAX_BATCH = 10;
 
 @Injectable()
 export class UploadService {
-    private validateFile(file: FileUpload): void {
-        if (!file) {
-            throw new BadRequestException('File is required');
-        }
-        if (!file.buffer) {
-            throw new BadRequestException('File buffer is required');
-        }
-        if (!file.originalname) {
-            throw new BadRequestException('File originalname is required');
-        }
-        if (!file.mimetype) {
-            throw new BadRequestException('File mimetype is required');
-        }
-        if (file.buffer.length === 0) {
-            throw new BadRequestException('File cannot be empty');
-        }
+  private readonly logger = new Logger(UploadService.name);
+
+  // ── Single image ──────────────────────────────────────────────────────────────
+
+  async uploadImage(
+    file: Express.Multer.File,
+    watermark = true,
+  ): Promise<ApiResponse<SingleUploadResult>> {
+    this.assertImageType(file);
+    this.assertSize(file, MAX_IMAGE_SIZE, '10 MB');
+
+    const url = await uploadFileToAWSS3(file, this.imageKey(file), true, watermark);
+
+    return {
+      status: true,
+      message: 'Image uploaded successfully',
+      data: { url, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size },
+    };
+  }
+
+  // ── Multiple images ───────────────────────────────────────────────────────────
+
+  async uploadImages(
+    files: Express.Multer.File[],
+    watermark = true,
+  ): Promise<ApiResponse<MultiUploadResult>> {
+    if (files.length > MAX_BATCH) {
+      throw new BadRequestException(`Maximum ${MAX_BATCH} files per request`);
     }
 
-    async addImage(
-        imageType: ImageType,
-        image: FileUpload,
-    ) {
-        this.validateFile(image);
-        const fileExtension = image.originalname.split('.').pop();
-        const s3Key = `${imageType}/${generateId()}-${Date.now()}.${fileExtension}`;
-        const imageUrl = await uploadFileToAWSS3(image, s3Key);
+    const results = await Promise.all(
+      files.map((file) => this.uploadOneImage(file, watermark)),
+    );
 
-        return {
-            message: "Image Uploaded Successfully",
-            status: true,
-            data: {
-                url: imageUrl,
-                fileType: imageType,
-            }
-        };
+    const successful = results.filter((r): r is SingleUploadResult => 'url' in r);
+    const failed = results.filter((r): r is { originalName: string; reason: string } => 'reason' in r);
+
+    return {
+      status: true,
+      message: `${successful.length} of ${files.length} image(s) uploaded`,
+      data: {
+        successful,
+        failed,
+        summary: { total: files.length, successful: successful.length, failed: failed.length },
+      },
+    };
+  }
+
+  // ── Single file (docs) ────────────────────────────────────────────────────────
+
+  async uploadFile(file: Express.Multer.File): Promise<ApiResponse<SingleUploadResult>> {
+    this.assertFileType(file);
+    this.assertSize(file, MAX_FILE_SIZE, '20 MB');
+
+    // no optimisation or watermark for non-image files
+    const url = await uploadFileToAWSS3(file, this.fileKey(file), false, false);
+
+    return {
+      status: true,
+      message: 'File uploaded successfully',
+      data: { url, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size },
+    };
+  }
+
+  // ── Multiple files (docs) ─────────────────────────────────────────────────────
+
+  async uploadFiles(files: Express.Multer.File[]): Promise<ApiResponse<MultiUploadResult>> {
+    if (files.length > MAX_BATCH) {
+      throw new BadRequestException(`Maximum ${MAX_BATCH} files per request`);
     }
 
-    async addFile(
-        fileType: string,
-        file: FileUpload,
-    ) {
-        this.validateFile(file);
-        const fileExtension = file.originalname.split('.').pop();
-        const s3Key = `files/${fileType}/${generateId()}-${Date.now()}.${fileExtension}`;
+    const results = await Promise.all(files.map((file) => this.uploadOneFile(file)));
 
-        // For non-image files, disable image optimization
-        const shouldOptimize = file.mimetype?.startsWith('image/') || false;
-        const fileUrl = await uploadFileToAWSS3(file, s3Key, shouldOptimize);
+    const successful = results.filter((r): r is SingleUploadResult => 'url' in r);
+    const failed = results.filter((r): r is { originalName: string; reason: string } => 'reason' in r);
 
-        return {
-            message: "File Uploaded Successfully",
-            status: true,
-            data: {
-                url: fileUrl,
-                fileType: fileType,
-            }
-        };
+    return {
+      status: true,
+      message: `${successful.length} of ${files.length} file(s) uploaded`,
+      data: {
+        successful,
+        failed,
+        summary: { total: files.length, successful: successful.length, failed: failed.length },
+      },
+    };
+  }
+
+  // ── Private helpers ───────────────────────────────────────────────────────────
+
+  private async uploadOneImage(
+    file: Express.Multer.File,
+    watermark: boolean,
+  ): Promise<SingleUploadResult | { originalName: string; reason: string }> {
+    try {
+      this.assertImageType(file);
+      this.assertSize(file, MAX_IMAGE_SIZE, '10 MB');
+      const url = await uploadFileToAWSS3(file, this.imageKey(file), true, watermark);
+      return { url, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size };
+    } catch (err: any) {
+      this.logger.warn(`Image upload failed — ${file.originalname}: ${err.message}`);
+      return { originalName: file.originalname, reason: err.message };
     }
+  }
 
-    async addMultipleImages(
-        imageType: ImageType,
-        images: FileUpload[],
-    ) {
-        const results: UploadResult[] = [];
-        const successfulUploads = [];
-        const failedUploads = [];
-
-        // Process files in parallel for better performance
-        const uploadPromises = images.map(async (image) => {
-            try {
-                const fileExtension = image.originalname.split('.').pop();
-                const s3Key = `${imageType}/${generateId()}-${Date.now()}.${fileExtension}`;
-                const imageUrl = await uploadFileToAWSS3(image, s3Key);
-
-                const result: UploadResult = {
-                    url: imageUrl,
-                    originalname: image.originalname,
-                    size: image.size,
-                    success: true
-                };
-
-                successfulUploads.push(result);
-                return result;
-            } catch (error) {
-                const result: UploadResult = {
-                    url: '',
-                    originalname: image.originalname,
-                    size: image.size,
-                    success: false,
-                    error: error.message
-                };
-
-                failedUploads.push(result);
-                return result;
-            }
-        });
-
-        // Wait for all uploads to complete
-        const allResults = await Promise.all(uploadPromises);
-        results.push(...allResults);
-
-        return {
-            message: `Processed ${images.length} images. ${successfulUploads.length} successful, ${failedUploads.length} failed`,
-            status: successfulUploads.length > 0,
-            data: {
-                successful: successfulUploads,
-                failed: failedUploads,
-                summary: {
-                    total: images.length,
-                    successful: successfulUploads.length,
-                    failed: failedUploads.length,
-                    fileType: imageType
-                }
-            }
-        };
+  private async uploadOneFile(
+    file: Express.Multer.File,
+  ): Promise<SingleUploadResult | { originalName: string; reason: string }> {
+    try {
+      this.assertFileType(file);
+      this.assertSize(file, MAX_FILE_SIZE, '20 MB');
+      const url = await uploadFileToAWSS3(file, this.fileKey(file), false, false);
+      return { url, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size };
+    } catch (err: any) {
+      this.logger.warn(`File upload failed — ${file.originalname}: ${err.message}`);
+      return { originalName: file.originalname, reason: err.message };
     }
+  }
 
-    async addMultipleFiles(
-        fileType: string,
-        files: FileUpload[],
-    ) {
-        const results: UploadResult[] = [];
-        const successfulUploads = [];
-        const failedUploads = [];
-
-        // Process files in parallel for better performance
-        const uploadPromises = files.map(async (file) => {
-            try {
-                const fileExtension = file.originalname.split('.').pop();
-                const s3Key = `files/${fileType}/${generateId()}-${Date.now()}.${fileExtension}`;
-
-                // For non-image files, disable image optimization
-                const shouldOptimize = file.mimetype?.startsWith('image/') || false;
-                const fileUrl = await uploadFileToAWSS3(file, s3Key, shouldOptimize);
-
-                const result: UploadResult = {
-                    url: fileUrl,
-                    originalname: file.originalname,
-                    size: file.size,
-                    success: true
-                };
-
-                successfulUploads.push(result);
-                return result;
-            } catch (error) {
-                const result: UploadResult = {
-                    url: '',
-                    originalname: file.originalname,
-                    size: file.size,
-                    success: false,
-                    error: error.message
-                };
-
-                failedUploads.push(result);
-                return result;
-            }
-        });
-
-        // Wait for all uploads to complete
-        const allResults = await Promise.all(uploadPromises);
-        results.push(...allResults);
-
-        return {
-            message: `Processed ${files.length} files. ${successfulUploads.length} successful, ${failedUploads.length} failed`,
-            status: successfulUploads.length > 0,
-            data: {
-                successful: successfulUploads,
-                failed: failedUploads,
-                summary: {
-                    total: files.length,
-                    successful: successfulUploads.length,
-                    failed: failedUploads.length,
-                    fileType: fileType
-                }
-            }
-        };
+  private assertImageType(file: Express.Multer.File) {
+    if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Unsupported image type "${file.mimetype}". Allowed: jpeg, png, webp, gif`,
+      );
     }
+  }
+
+  private assertFileType(file: Express.Multer.File) {
+    if (!ALLOWED_FILE_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Unsupported file type "${file.mimetype}". Allowed: pdf, doc, docx`,
+      );
+    }
+  }
+
+  private assertSize(file: Express.Multer.File, maxBytes: number, label: string) {
+    if (file.size > maxBytes) {
+      throw new BadRequestException(
+        `"${file.originalname}" exceeds the ${label} size limit`,
+      );
+    }
+    if (file.size === 0) {
+      throw new BadRequestException(`"${file.originalname}" is empty`);
+    }
+  }
+
+  private imageKey(file: Express.Multer.File): string {
+    const ext = file.mimetype.split('/')[1].replace('jpeg', 'jpg');
+    return `images/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  }
+
+  private fileKey(file: Express.Multer.File): string {
+    const ext = file.originalname.split('.').pop() ?? 'bin';
+    return `files/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  }
 }
