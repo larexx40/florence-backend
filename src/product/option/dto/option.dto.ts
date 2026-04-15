@@ -1,12 +1,13 @@
-import { Transform } from 'class-transformer';
+import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
+  IsArray,
   IsHexColor,
-  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
-  Min,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -15,28 +16,14 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class CreateProductOptionDto {
   @ApiProperty({
     example: 'uuid-of-category-option',
-    description: 'CategoryOption UUID — must belong to this product\'s category',
+    description: "CategoryOption UUID — must belong to this product's category",
   })
   @IsNotEmpty()
   @IsUUID('4')
   categoryOptionId: string;
-
-  @ApiPropertyOptional({ example: 0, description: 'Display order on the product page' })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Transform(({ value }) => parseInt(value, 10))
-  position?: number;
 }
 
-export class UpdateProductOptionDto {
-  @ApiPropertyOptional({ example: 1, description: 'Display order on the product page' })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Transform(({ value }) => parseInt(value, 10))
-  position?: number;
-}
+export class UpdateProductOptionDto {}
 
 // ── ProductOptionValue DTOs ───────────────────────────────────────────────────
 
@@ -46,22 +33,10 @@ export class CreateProductOptionValueDto {
   @IsString()
   value: string;
 
-  @ApiPropertyOptional({ example: 'Jet Black', description: 'Override label shown in the UI' })
-  @IsOptional()
-  @IsString()
-  displayName?: string;
-
   @ApiPropertyOptional({ example: '#000000', description: 'Hex colour code — for colour swatch UI' })
   @IsOptional()
   @IsHexColor()
   colorHex?: string;
-
-  @ApiPropertyOptional({ example: 0, description: 'Display order within the option' })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Transform(({ value }) => parseInt(value, 10))
-  position?: number;
 }
 
 export class UpdateProductOptionValueDto {
@@ -70,22 +45,59 @@ export class UpdateProductOptionValueDto {
   @IsString()
   value?: string;
 
-  @ApiPropertyOptional({ example: 'Navy' })
-  @IsOptional()
-  @IsString()
-  displayName?: string;
-
   @ApiPropertyOptional({ example: '#001F5B' })
   @IsOptional()
   @IsHexColor()
   colorHex?: string;
+}
 
-  @ApiPropertyOptional({ example: 1 })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Transform(({ value }) => parseInt(value, 10))
-  position?: number;
+// ── Bulk create ───────────────────────────────────────────────────────────────
+
+export class BulkCreateOptionItemDto {
+  @ApiProperty({
+    example: 'uuid-of-category-option',
+    description: "CategoryOption UUID — must belong to this product's category",
+  })
+  @IsNotEmpty()
+  @IsUUID('4')
+  categoryOptionId: string;
+
+  @ApiProperty({
+    type: () => [CreateProductOptionValueDto],
+    description: 'All values for this option (e.g. Red, Green, Blue for Color)',
+  })
+  @IsArray()
+  @ArrayMinSize(1, { message: 'Each option must have at least one value' })
+  @ValidateNested({ each: true })
+  @Type(() => CreateProductOptionValueDto)
+  values: CreateProductOptionValueDto[];
+}
+
+export class BulkCreateOptionsDto {
+  @ApiProperty({
+    type: () => [BulkCreateOptionItemDto],
+    description:
+      'Array of options with their values. Created atomically — one failure rolls back everything.',
+    example: [
+      {
+        categoryOptionId: 'uuid-color',
+        values: [
+          { value: 'Red', colorHex: '#FF0000' },
+          { value: 'Green', colorHex: '#00FF00' },
+          { value: 'Blue', colorHex: '#0000FF' },
+        ],
+      },
+      {
+        categoryOptionId: 'uuid-size',
+        values: [{ value: 'S' }, { value: 'M' }, { value: 'L' }],
+      },
+    ],
+  })
+  @IsArray()
+  @ArrayMinSize(1, { message: 'Provide at least one option' })
+  @ValidateNested({ each: true })
+  @Type(() => BulkCreateOptionItemDto)
+  options: BulkCreateOptionItemDto[];
 }
 
 // ── Response DTOs ─────────────────────────────────────────────────────────────
@@ -100,14 +112,8 @@ export class ProductOptionValueResponseDto {
   @ApiProperty({ example: 'Black' })
   value: string;
 
-  @ApiPropertyOptional({ example: 'Jet Black', nullable: true })
-  displayName: string | null;
-
   @ApiPropertyOptional({ example: '#000000', nullable: true })
   colorHex: string | null;
-
-  @ApiProperty({ example: 0 })
-  position: number;
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   createdAt: Date;
@@ -126,11 +132,8 @@ export class ProductOptionResponseDto {
   @ApiProperty({ example: 'uuid-of-category-option' })
   categoryOptionId: string;
 
-  @ApiProperty({ example: 0 })
-  position: number;
-
-  @ApiProperty({ example: { id: 'uuid', name: 'Color', position: 1 } })
-  categoryOption: { id: string; name: string; position: number };
+  @ApiProperty({ example: { id: 'uuid', name: 'Color' } })
+  categoryOption: { id: string; name: string };
 
   @ApiProperty({ type: () => [ProductOptionValueResponseDto] })
   values: ProductOptionValueResponseDto[];

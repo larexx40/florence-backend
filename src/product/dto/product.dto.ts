@@ -1,16 +1,20 @@
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsDecimal,
+  IsEnum,
   IsIn,
   IsInt,
   IsNotEmpty,
   IsNumberString,
   IsOptional,
+  IsPositive,
   IsString,
   IsUUID,
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DirectDiscountType } from '@prisma/client';
 
 export class ProductQueryDto {
   @ApiPropertyOptional({ example: 'bag' })
@@ -102,6 +106,22 @@ export class CreateProductDto {
   @IsOptional()
   @IsUUID('4')
   discountId?: string;
+
+  @ApiPropertyOptional({ example: false, description: 'Enable the direct discount on this product' })
+  @IsOptional()
+  @IsBoolean()
+  directDiscountEnabled?: boolean;
+
+  @ApiPropertyOptional({ enum: DirectDiscountType, example: DirectDiscountType.PERCENTAGE })
+  @IsOptional()
+  @IsEnum(DirectDiscountType)
+  directDiscountType?: DirectDiscountType;
+
+  @ApiPropertyOptional({ example: '15.00', description: 'Percentage (0–100) or absolute amount depending on directDiscountType' })
+  @IsOptional()
+  @IsDecimal()
+  @IsPositive()
+  directDiscountValue?: string;
 }
 
 export class UpdateProductDto {
@@ -156,4 +176,20 @@ export class UpdateProductDto {
   @IsOptional()
   @IsUUID('4')
   discountId?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  directDiscountEnabled?: boolean;
+
+  @ApiPropertyOptional({ enum: DirectDiscountType, example: DirectDiscountType.PERCENTAGE })
+  @IsOptional()
+  @IsEnum(DirectDiscountType)
+  directDiscountType?: DirectDiscountType;
+
+  @ApiPropertyOptional({ example: '15.00' })
+  @IsOptional()
+  @IsDecimal()
+  @IsPositive()
+  directDiscountValue?: string;
 }

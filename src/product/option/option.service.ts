@@ -7,19 +7,19 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse } from 'src/common/types';
 import {
+  BulkCreateOptionsDto,
   CreateProductOptionDto,
   CreateProductOptionValueDto,
   ProductOptionResponseDto,
   ProductOptionValueResponseDto,
-  UpdateProductOptionDto,
   UpdateProductOptionValueDto,
 } from './dto/option.dto';
 
 // ── Shared include ───────────────────────────────────────────────────────────
 
 const OPTION_INCLUDE = {
-  categoryOption: { select: { id: true, name: true, position: true } },
-  values: { orderBy: { position: 'asc' as const } },
+  categoryOption: { select: { id: true, name: true } },
+  values: { orderBy: { createdAt: 'asc' as const } },
 } as const;
 
 @Injectable()
@@ -57,7 +57,7 @@ export class OptionService {
 
     const options = await this.prisma.productOption.findMany({
       where: { productId },
-      orderBy: { position: 'asc' },
+      orderBy: { createdAt: 'asc' },
       include: OPTION_INCLUDE,
     });
 
@@ -70,12 +70,11 @@ export class OptionService {
   ): Promise<ApiResponse<ProductOptionResponseDto>> {
     const product = await this.findProductOrThrow(productId);
 
-    // Confirm the CategoryOption belongs to this product's category
     const categoryOption = await this.prisma.categoryOption.findFirst({
       where: { id: input.categoryOptionId, categoryId: product.categoryId },
     });
     if (!categoryOption) {
-      throw new NotFoundException('Category option not found in this product\'s category');
+      throw new NotFoundException("Category option not found in this product's category");
     }
 
     const conflict = await this.prisma.productOption.findUnique({
@@ -86,41 +85,97 @@ export class OptionService {
     }
 
     const option = await this.prisma.productOption.create({
-      data: {
-        productId,
-        categoryOptionId: input.categoryOptionId,
-        position: input.position ?? 0,
-      },
+      data: { productId, categoryOptionId: input.categoryOptionId },
       include: OPTION_INCLUDE,
     });
 
     return { status: true, message: 'Option added to product successfully', data: option as any };
   }
 
-  async updateOption(
+  async addBulkOptions(
     productId: string,
-    optionId: string,
-    input: UpdateProductOptionDto,
-  ): Promise<ApiResponse<ProductOptionResponseDto>> {
-    await this.findProductOrThrow(productId);
-    await this.findOptionOrThrow(productId, optionId);
+    input: BulkCreateOptionsDto,
+  ): Promise<ApiResponse<ProductOptionResponseDto[]>> {
+    const product = await this.findProductOrThrow(productId);
 
-    const updated = await this.prisma.productOption.update({
-      where: { id: optionId },
-      data: {
-        ...(input.position !== undefined && { position: input.position }),
-      },
-      include: OPTION_INCLUDE,
+    const categoryOptionIds = input.options.map((o) => o.categoryOptionId);
+
+    // Reject duplicate option types in the same request
+    if (new Set(categoryOptionIds).size !== categoryOptionIds.length) {
+      throw new BadRequestException(
+        'Duplicate categoryOptionId in request — each option type can only appear once',
+      );
+    }
+
+    // All categoryOptionIds must belong to this product's category
+    const categoryOptions = await this.prisma.categoryOption.findMany({
+      where: { id: { in: categoryOptionIds }, categoryId: product.categoryId },
     });
 
-    return { status: true, message: 'Option updated successfully', data: updated as any };
+    if (categoryOptions.length !== categoryOptionIds.length) {
+      const foundIds = new Set(categoryOptions.map((co) => co.id));
+      const missing = categoryOptionIds.filter((id) => !foundIds.has(id));
+      throw new NotFoundException(
+        `Category option(s) not found in this product's category: ${missing.join(', ')}`,
+      );
+    }
+
+    // None of these option types may already exist on this product
+    const existing = await this.prisma.productOption.findMany({
+      where: { productId, categoryOptionId: { in: categoryOptionIds } },
+      include: { categoryOption: { select: { name: true } } },
+    });
+    if (existing.length > 0) {
+      const names = existing.map((e) => e.categoryOption.name).join(', ');
+      throw new ConflictException(`Option(s) already added to this product: ${names}`);
+    }
+
+    // Reject duplicate values within each option
+    for (const optionInput of input.options) {
+      const seen = new Set<string>();
+      for (const v of optionInput.values) {
+        const key = v.value.toLowerCase();
+        if (seen.has(key)) {
+          const catOpt = categoryOptions.find((co) => co.id === optionInput.categoryOptionId);
+          throw new BadRequestException(
+            `Duplicate value "${v.value}" in option "${catOpt?.name}" — each value must be unique`,
+          );
+        }
+        seen.add(key);
+      }
+    }
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const results: any[] = [];
+
+      for (const optionInput of input.options) {
+        const productOption = await tx.productOption.create({
+          data: {
+            productId,
+            categoryOptionId: optionInput.categoryOptionId,
+            values: {
+              create: optionInput.values.map((v) => ({
+                value: v.value,
+                colorHex: v.colorHex ?? null,
+              })),
+            },
+          },
+          include: OPTION_INCLUDE,
+        });
+
+        results.push(productOption);
+      }
+
+      return results;
+    });
+
+    return { status: true, message: 'Product options added successfully', data: created };
   }
 
   async removeOption(productId: string, optionId: string): Promise<ApiResponse<null>> {
     await this.findProductOrThrow(productId);
     await this.findOptionOrThrow(productId, optionId);
 
-    // Block delete if any value under this option is used by a variant
     const inUse = await this.prisma.variantOptionValue.findFirst({
       where: { productOptionValue: { productOptionId: optionId } },
     });
@@ -130,7 +185,7 @@ export class OptionService {
       );
     }
 
-    // Cascade deletes ProductOptionValues automatically (schema: onDelete: Cascade)
+    // onDelete: Cascade removes ProductOptionValues automatically
     await this.prisma.productOption.delete({ where: { id: optionId } });
     return { status: true, message: 'Option removed from product successfully', data: null };
   }
@@ -156,9 +211,7 @@ export class OptionService {
       data: {
         productOptionId: optionId,
         value: input.value,
-        displayName: input.displayName ?? null,
         colorHex: input.colorHex ?? null,
-        position: input.position ?? 0,
       },
     });
 
@@ -177,11 +230,7 @@ export class OptionService {
 
     if (input.value) {
       const conflict = await this.prisma.productOptionValue.findFirst({
-        where: {
-          productOptionId: optionId,
-          value: input.value,
-          id: { not: valueId },
-        },
+        where: { productOptionId: optionId, value: input.value, id: { not: valueId } },
       });
       if (conflict) {
         throw new ConflictException(`Value "${input.value}" already exists on this option`);
@@ -192,9 +241,7 @@ export class OptionService {
       where: { id: valueId },
       data: {
         ...(input.value !== undefined && { value: input.value }),
-        ...(input.displayName !== undefined && { displayName: input.displayName }),
         ...(input.colorHex !== undefined && { colorHex: input.colorHex }),
-        ...(input.position !== undefined && { position: input.position }),
       },
     });
 

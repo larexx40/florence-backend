@@ -365,7 +365,7 @@ export class CategoryService {
 
     const options = await this.prisma.categoryOption.findMany({
       where: { categoryId },
-      orderBy: { position: 'asc' },
+      orderBy: { name: 'asc' },
     });
 
     return { status: true, message: 'Category options fetched successfully', data: options };
@@ -386,7 +386,6 @@ export class CategoryService {
       data: {
         categoryId,
         name: input.name,
-        position: input.position ?? 0,
         isRequired: input.isRequired ?? false,
       },
     });
@@ -413,7 +412,6 @@ export class CategoryService {
       where: { id: optionId },
       data: {
         ...(input.name !== undefined && { name: input.name }),
-        ...(input.position !== undefined && { position: input.position }),
         ...(input.isRequired !== undefined && { isRequired: input.isRequired }),
       },
     });

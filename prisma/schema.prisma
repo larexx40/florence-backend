@@ -58,6 +58,11 @@ enum DiscountType {
   TIERED_QUANTITY
 }
 
+enum DirectDiscountType {
+  PERCENTAGE
+  AMOUNT
+}
+
 enum DiscountScope {
   PRODUCT
   ORDER
@@ -185,7 +190,6 @@ model CategoryOption {
   id          String   @id @default(uuid()) @map("id")
   categoryId  String   @map("category_id")
   name        String   @map("name")       // "Color", "Size", "Material"
-  position    Int      @default(0) @map("position")
   isRequired  Boolean  @default(false) @map("is_required")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -248,9 +252,14 @@ model Product {
   orderIncrement        Int?     @map("order_increment")
   // this variant must be in the cart before other variants of this product can be added
   prerequisiteVariantId String?  @map("prerequisite_variant_id")
-  discountId            String?  @map("discount_id")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  discountId            String?            @map("discount_id")
+  // ── Direct discount (overrides campaign discount and variant discounts) ──────
+  directDiscountEnabled Boolean            @default(false) @map("direct_discount_enabled")
+  directDiscountType    DirectDiscountType? @map("direct_discount_type")
+  // PERCENTAGE: 0–100 (e.g. 15 = 15% off)  |  AMOUNT: absolute deduction in base currency
+  directDiscountValue   Decimal?           @map("direct_discount_value") @db.Decimal(12, 2)
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
 
   category              Category             @relation(fields: [categoryId], references: [id])
   discount              Discount?            @relation(fields: [discountId], references: [id])
@@ -274,7 +283,6 @@ model ProductOption {
   id               String   @id @default(uuid()) @map("id")
   productId        String   @map("product_id")
   categoryOptionId String   @map("category_option_id")
-  position         Int      @default(0) @map("position")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
@@ -295,9 +303,7 @@ model ProductOptionValue {
   id              String   @id @default(uuid()) @map("id")
   productOptionId String   @map("product_option_id")
   value           String   @map("value")        // "Black", "XL", "Cotton"
-  displayName     String?  @map("display_name") // UI label override
   colorHex        String?  @map("color_hex")    // "#000000" — for colour swatches
-  position        Int      @default(0) @map("position")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 

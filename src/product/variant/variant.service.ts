@@ -19,7 +19,7 @@ const VARIANT_INCLUDE = {
       productOptionValue: {
         include: {
           productOption: {
-            include: { categoryOption: { select: { id: true, name: true, position: true } } },
+            include: { categoryOption: { select: { id: true, name: true } } },
           },
         },
       },
@@ -134,7 +134,7 @@ export class VariantService {
       },
       include: {
         productOption: {
-          include: { categoryOption: { select: { id: true, name: true, position: true } } },
+          include: { categoryOption: { select: { id: true, name: true } } },
         },
       },
     });
@@ -178,10 +178,10 @@ export class VariantService {
     });
     if (duplicate) throw new ConflictException('A variant with this combination already exists');
 
-    // Auto-generate denormalized title sorted by categoryOption.position
+    // Auto-generate denormalized title sorted by categoryOption.name for deterministic output
     const title =
       [...povRows]
-        .sort((a, b) => a.productOption.categoryOption.position - b.productOption.categoryOption.position)
+        .sort((a, b) => a.productOption.categoryOption.name.localeCompare(b.productOption.categoryOption.name))
         .map((r) => r.value)
         .join(' / ') || 'Default';
 

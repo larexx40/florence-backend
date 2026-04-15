@@ -98,7 +98,7 @@ export class UploadController {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      throw new BadRequestException('Error processing file upload: ' + error.message);
+      throw new BadRequestException('Error processing file upload: ' + error);
     }
   }
 
@@ -201,7 +201,7 @@ export class UploadController {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      throw new BadRequestException('Error processing file upload: ' + error.message);
+      throw new BadRequestException('Error processing file upload: ' + error);
     }
   }
 
@@ -301,7 +301,7 @@ export class UploadController {
             size: file.size,
           });
         } catch (error) {
-          errors.push(`${file.originalname}: ${error.message}`);
+          errors.push(`${file.originalname}: ${error}`);
         }
       }
 
@@ -318,7 +318,7 @@ export class UploadController {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      throw new BadRequestException('Error processing multiple image upload: ' + error.message);
+      throw new BadRequestException('Error processing multiple image upload: ' + error);
     }
   }
 
@@ -432,7 +432,7 @@ export class UploadController {
             size: file.size,
           });
         } catch (error) {
-          errors.push(`${file.originalname}: ${error.message}`);
+          errors.push(`${file.originalname}: ${error}`);
         }
       }
 
@@ -449,7 +449,7 @@ export class UploadController {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      throw new BadRequestException('Error processing multiple file upload: ' + error.message);
+      throw new BadRequestException('Error processing multiple file upload: ' + error);
     }
   }
 }

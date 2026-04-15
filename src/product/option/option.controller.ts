@@ -22,11 +22,11 @@ import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
 import { OptionService } from './option.service';
 import {
+  BulkCreateOptionsDto,
   CreateProductOptionDto,
   CreateProductOptionValueDto,
   ProductOptionResponseDto,
   ProductOptionValueResponseDto,
-  UpdateProductOptionDto,
   UpdateProductOptionValueDto,
 } from './dto/option.dto';
 
@@ -59,6 +59,32 @@ export class OptionController {
     return this.optionService.getProductOptions(productId);
   }
 
+  @Post('bulk')
+  @ApiOperation({
+    summary: 'Add multiple options with their values to a product in one atomic call (admin only)',
+    description: 'All options and values are created in a single transaction — if any item fails, nothing is saved.',
+  })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiResponse({
+    status: 201,
+    schema: {
+      properties: {
+        status: { type: 'boolean' },
+        message: { type: 'string' },
+        data: { type: 'array', items: { $ref: getSchemaPath(ProductOptionResponseDto) } },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Duplicate option type or duplicate value within an option' })
+  @ApiResponse({ status: 404, description: 'Product not found or category option not in this product\'s category' })
+  @ApiResponse({ status: 409, description: 'One or more option types already added to this product' })
+  addBulkOptions(
+    @Param('productId') productId: string,
+    @Body() input: BulkCreateOptionsDto,
+  ) {
+    return this.optionService.addBulkOptions(productId, input);
+  }
+
   @Post()
   @ApiOperation({ summary: 'Add a category option type to a product (admin only)' })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
@@ -80,20 +106,6 @@ export class OptionController {
     @Body() input: CreateProductOptionDto,
   ) {
     return this.optionService.addOption(productId, input);
-  }
-
-  @Patch(':optionId')
-  @ApiOperation({ summary: 'Update display order of a product option (admin only)' })
-  @ApiParam({ name: 'productId', description: 'Product UUID' })
-  @ApiParam({ name: 'optionId', description: 'ProductOption UUID' })
-  @ApiResponse({ status: 200, description: 'Option updated' })
-  @ApiResponse({ status: 404, description: 'Product or option not found' })
-  updateOption(
-    @Param('productId') productId: string,
-    @Param('optionId') optionId: string,
-    @Body() input: UpdateProductOptionDto,
-  ) {
-    return this.optionService.updateOption(productId, optionId, input);
   }
 
   @Delete(':optionId')

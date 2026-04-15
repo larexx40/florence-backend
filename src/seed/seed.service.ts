@@ -196,7 +196,6 @@ export class SeedService {
             data: {
               categoryId: category.id,
               name: option.name,
-              position: option.position,
               isRequired: option.isRequired,
             },
           });
@@ -288,7 +287,7 @@ export class SeedService {
 
         if (!productOption) {
           productOption = await this.prisma.productOption.create({
-            data: { productId: product.id, categoryOptionId: catOption.id, position: catOption.position },
+            data: { productId: product.id, categoryOptionId: catOption.id },
           });
           summary.options.created += 1;
         } else {
@@ -307,7 +306,7 @@ export class SeedService {
 
           if (!existing) {
             await this.prisma.productOptionValue.create({
-              data: { productOptionId: productOption.id, value, position: index },
+              data: { productOptionId: productOption.id, value },
             });
             summary.optionValues.created += 1;
           } else {

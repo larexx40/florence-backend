@@ -33,10 +33,10 @@ const PRODUCT_DETAIL_INCLUDE: any = {
     orderBy: { position: 'asc' as const },
   },
   productOptions: {
-    orderBy: { position: 'asc' as const },
+    orderBy: { createdAt: 'asc' as const },
     include: {
-      categoryOption: { select: { id: true, name: true, position: true } },
-      values: { orderBy: { position: 'asc' as const } },
+      categoryOption: { select: { id: true, name: true } },
+      values: { orderBy: { createdAt: 'asc' as const } },
     },
   },
   variants: {
@@ -47,7 +47,7 @@ const PRODUCT_DETAIL_INCLUDE: any = {
           productOptionValue: {
             include: {
               productOption: {
-                include: { categoryOption: { select: { id: true, name: true, position: true } } },
+                include: { categoryOption: { select: { id: true, name: true } } },
               },
             },
           },
@@ -175,6 +175,9 @@ export class ProductService {
         orderIncrement: input.orderIncrement ?? null,
         prerequisiteVariantId: input.prerequisiteVariantId ?? null,
         discountId: input.discountId ?? null,
+        directDiscountEnabled: input.directDiscountEnabled ?? false,
+        directDiscountType: input.directDiscountType ?? null,
+        directDiscountValue: input.directDiscountValue ?? null,
       },
       include: PRODUCT_DETAIL_INCLUDE,
     });
@@ -231,6 +234,9 @@ export class ProductService {
           prerequisiteVariantId: input.prerequisiteVariantId,
         }),
         ...(input.discountId !== undefined && { discountId: input.discountId }),
+        ...(input.directDiscountEnabled !== undefined && { directDiscountEnabled: input.directDiscountEnabled }),
+        ...(input.directDiscountType !== undefined && { directDiscountType: input.directDiscountType }),
+        ...(input.directDiscountValue !== undefined && { directDiscountValue: input.directDiscountValue }),
       },
       include: PRODUCT_DETAIL_INCLUDE,
     });
