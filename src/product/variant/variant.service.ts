@@ -11,16 +11,21 @@ import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
 import { AttachImageDto } from 'src/image/dto/image.dto';
 import { CreateVariantDto, UpdateStockDto, UpdateVariantDto, VariantQueryDto } from './dto/variant.dto';
 
+// ── Shared include ────────────────────────────────────────────────────────────
+
 const VARIANT_INCLUDE = {
-  optionValues: {
+  variantOptionValues: {
     include: {
-      optionValue: {
-        include: { productOption: { include: { option: true } } },
+      productOptionValue: {
+        include: {
+          productOption: {
+            include: { categoryOption: { select: { id: true, name: true, position: true } } },
+          },
+        },
       },
     },
   },
   images: {
-    include: { image: true },
     orderBy: { position: 'asc' as const },
   },
 };
@@ -41,7 +46,7 @@ export class VariantService {
   }
 
   private async findVariantOrThrow(productId: string, variantId: string) {
-    const variant = await this.prisma.variant.findFirst({
+    const variant = await this.prisma.productVariant.findFirst({
       where: { id: variantId, productId },
     });
     if (!variant) throw new NotFoundException('Variant not found on this product');
@@ -70,7 +75,7 @@ export class VariantService {
     const orderBy = { [sortBy]: sortOrder };
 
     if (query.all) {
-      const variants = await this.prisma.variant.findMany({
+      const variants = await this.prisma.productVariant.findMany({
         where,
         orderBy,
         include: VARIANT_INCLUDE,
@@ -87,14 +92,14 @@ export class VariantService {
     }
 
     const [variants, total] = await Promise.all([
-      this.prisma.variant.findMany({
+      this.prisma.productVariant.findMany({
         where,
         orderBy,
         skip: (page - 1) * limit,
         take: limit,
         include: VARIANT_INCLUDE,
       }),
-      this.prisma.variant.count({ where }),
+      this.prisma.productVariant.count({ where }),
     ]);
 
     return {
@@ -117,49 +122,55 @@ export class VariantService {
   async create(productId: string, input: CreateVariantDto): Promise<ApiResponse<any>> {
     await this.findProductOrThrow(productId);
 
-    const productOptions = await this.prisma.productOption.findMany({
-      where: { productId },
-      include: { values: { select: { id: true } } },
-    });
-
-    if (!productOptions.length) {
-      throw new BadRequestException(
-        'Add at least one option to the product before creating variants',
-      );
+    if (!input.productOptionValueIds.length) {
+      throw new BadRequestException('At least one productOptionValueId is required');
     }
 
-    const valueToOption = new Map<string, string>();
-    productOptions.forEach((po) => po.values.forEach((v) => valueToOption.set(v.id, po.id)));
+    // Load the ProductOptionValues — must belong to this product's options
+    const povRows = await this.prisma.productOptionValue.findMany({
+      where: {
+        id: { in: input.productOptionValueIds },
+        productOption: { productId },
+      },
+      include: {
+        productOption: {
+          include: { categoryOption: { select: { id: true, name: true, position: true } } },
+        },
+      },
+    });
 
-    const invalidIds = input.optionValueIds.filter((id) => !valueToOption.has(id));
+    const foundIds = new Set(povRows.map((r) => r.id));
+    const invalidIds = input.productOptionValueIds.filter((id) => !foundIds.has(id));
     if (invalidIds.length) {
       throw new BadRequestException(
-        `These option value IDs do not belong to this product: ${invalidIds.join(', ')}`,
+        `These ProductOptionValue IDs are not declared for this product: ${invalidIds.join(', ')}`,
       );
     }
 
-    // ensure no two values from the same option
+    // Ensure no two values from the same option dimension
     const usedOptions = new Set<string>();
-    for (const valueId of input.optionValueIds) {
-      const optionId = valueToOption.get(valueId);
-      if (usedOptions.has(optionId)) {
-        throw new BadRequestException('Cannot select two values from the same option');
+    for (const row of povRows) {
+      const catOptionId = row.productOption.categoryOptionId;
+      if (usedOptions.has(catOptionId)) {
+        throw new BadRequestException(
+          `Cannot select two values from the same option (${row.productOption.categoryOption.name})`,
+        );
       }
-      usedOptions.add(optionId);
+      usedOptions.add(catOptionId);
     }
 
-    const skuTaken = await this.prisma.variant.findUnique({ where: { sku: input.sku } });
+    const skuTaken = await this.prisma.productVariant.findUnique({ where: { sku: input.sku } });
     if (skuTaken) throw new ConflictException(`SKU "${input.sku}" is already in use`);
 
-    // check combination uniqueness
-    const existingVariants = await this.prisma.variant.findMany({
+    // Check combination uniqueness against existing variants
+    const existingVariants = await this.prisma.productVariant.findMany({
       where: { productId },
-      include: { optionValues: { select: { optionValueId: true } } },
+      include: { variantOptionValues: { select: { productOptionValueId: true } } },
     });
 
-    const sortedNew = [...input.optionValueIds].sort();
+    const sortedNew = [...input.productOptionValueIds].sort();
     const duplicate = existingVariants.find((v) => {
-      const sortedExisting = v.optionValues.map((ov) => ov.optionValueId).sort();
+      const sortedExisting = v.variantOptionValues.map((ov) => ov.productOptionValueId).sort();
       return (
         sortedExisting.length === sortedNew.length &&
         sortedExisting.every((id, i) => id === sortedNew[i])
@@ -167,27 +178,35 @@ export class VariantService {
     });
     if (duplicate) throw new ConflictException('A variant with this combination already exists');
 
-    const variant = await this.prisma.variant.create({
+    // Auto-generate denormalized title sorted by categoryOption.position
+    const title =
+      [...povRows]
+        .sort((a, b) => a.productOption.categoryOption.position - b.productOption.categoryOption.position)
+        .map((r) => r.value)
+        .join(' / ') || 'Default';
+
+    const variant = await this.prisma.productVariant.create({
       data: {
         productId,
         sku: input.sku,
+        title,
         price: input.price,
         compareAtPrice: input.compareAtPrice ?? null,
         stockQty: input.stockQty ?? 0,
         weightKg: input.weightKg ?? null,
-        optionValues: {
-          create: input.optionValueIds.map((optionValueId) => ({ optionValueId })),
+        minQty: input.minQty ?? null,
+        maxQty: input.maxQty ?? null,
+        variantOptionValues: {
+          create: input.productOptionValueIds.map((productOptionValueId) => ({
+            productOptionValueId,
+          })),
         },
       },
       include: VARIANT_INCLUDE,
     });
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-    return {
-      status: true,
-      message: 'Variant created successfully',
-      data: variant,
-    };
+    return { status: true, message: 'Variant created successfully', data: variant };
   }
 
   async update(
@@ -198,13 +217,13 @@ export class VariantService {
     await this.findVariantOrThrow(productId, variantId);
 
     if (input.sku) {
-      const skuTaken = await this.prisma.variant.findFirst({
+      const skuTaken = await this.prisma.productVariant.findFirst({
         where: { sku: input.sku, id: { not: variantId } },
       });
       if (skuTaken) throw new ConflictException(`SKU "${input.sku}" is already in use`);
     }
 
-    const updated = await this.prisma.variant.update({
+    const updated = await this.prisma.productVariant.update({
       where: { id: variantId },
       data: {
         ...(input.sku !== undefined && { sku: input.sku }),
@@ -212,16 +231,14 @@ export class VariantService {
         ...(input.compareAtPrice !== undefined && { compareAtPrice: input.compareAtPrice }),
         ...(input.isActive !== undefined && { isActive: input.isActive }),
         ...(input.weightKg !== undefined && { weightKg: input.weightKg }),
+        ...(input.minQty !== undefined && { minQty: input.minQty }),
+        ...(input.maxQty !== undefined && { maxQty: input.maxQty }),
       },
       include: VARIANT_INCLUDE,
     });
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-    return {
-      status: true,
-      message: 'Variant updated successfully',
-      data: updated,
-    };
+    return { status: true, message: 'Variant updated successfully', data: updated };
   }
 
   async updateStock(
@@ -231,18 +248,14 @@ export class VariantService {
   ): Promise<ApiResponse<any>> {
     await this.findVariantOrThrow(productId, variantId);
 
-    const updated = await this.prisma.variant.update({
+    const updated = await this.prisma.productVariant.update({
       where: { id: variantId },
       data: { stockQty: input.stockQty },
       select: { id: true, sku: true, stockQty: true },
     });
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-    return {
-      status: true,
-      message: 'Stock updated successfully',
-      data: updated,
-    };
+    return { status: true, message: 'Stock updated successfully', data: updated };
   }
 
   async remove(productId: string, variantId: string): Promise<ApiResponse<null>> {
@@ -250,8 +263,8 @@ export class VariantService {
 
     const inOrders = await this.prisma.orderItem.findFirst({ where: { variantId } });
     if (inOrders) {
-      // soft-delete — cannot hard-delete because order history references this variant
-      await this.prisma.variant.update({ where: { id: variantId }, data: { isActive: false } });
+      // soft-delete — preserve order history references
+      await this.prisma.productVariant.update({ where: { id: variantId }, data: { isActive: false } });
       await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
       return {
         status: true,
@@ -264,7 +277,7 @@ export class VariantService {
       this.prisma.variantOptionValue.deleteMany({ where: { variantId } }),
       this.prisma.variantImage.deleteMany({ where: { variantId } }),
       this.prisma.cartItem.deleteMany({ where: { variantId } }),
-      this.prisma.variant.delete({ where: { id: variantId } }),
+      this.prisma.productVariant.delete({ where: { id: variantId } }),
     ]);
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
@@ -280,18 +293,12 @@ export class VariantService {
   ): Promise<ApiResponse<any>> {
     await this.findVariantOrThrow(productId, variantId);
 
-    const image = await this.prisma.image.findUnique({ where: { id: dto.imageId } });
-    if (!image) throw new NotFoundException('Image not found');
-
-    const link = await this.prisma.variantImage.upsert({
-      where: { variantId_imageId: { variantId, imageId: dto.imageId } },
-      create: { variantId, imageId: dto.imageId, position: dto.position ?? 0 },
-      update: { position: dto.position ?? 0 },
-      include: { image: true },
+    const image = await this.prisma.variantImage.create({
+      data: { variantId, url: dto.url, altText: dto.altText ?? null, position: dto.position ?? 0 },
     });
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-    return { status: true, message: 'Image attached to variant', data: link };
+    return { status: true, message: 'Image attached to variant', data: image };
   }
 
   async detachImage(
@@ -301,12 +308,10 @@ export class VariantService {
   ): Promise<ApiResponse<null>> {
     await this.findVariantOrThrow(productId, variantId);
 
-    const link = await this.prisma.variantImage.findUnique({
-      where: { variantId_imageId: { variantId, imageId } },
-    });
-    if (!link) throw new NotFoundException('Image is not attached to this variant');
+    const image = await this.prisma.variantImage.findFirst({ where: { id: imageId, variantId } });
+    if (!image) throw new NotFoundException('Image not found on this variant');
 
-    await this.prisma.variantImage.delete({ where: { variantId_imageId: { variantId, imageId } } });
+    await this.prisma.variantImage.delete({ where: { id: imageId } });
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return { status: true, message: 'Image detached from variant', data: null };

@@ -4,22 +4,26 @@ import {
   ApiHeader,
   ApiOperation,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
 import { ApiResponse as AppApiResponse } from 'src/common/types';
 import {
   RunSeedDto,
+  SeedCategoryOptionsDto,
   SeedShopifyCategoriesDto,
   SeedShopifyProductsDto,
 } from './dto/seed.dto';
 import {
   SeedCatalogCategoriesSummary,
   SeedCatalogProductsSummary,
+  SeedCategoryOptionsSummary,
 } from './seed.service';
 import { SeedRunSummary } from './seed.runner';
 import { SeedService } from './seed.service';
 
 @ApiTags('seed')
+@ApiSecurity('x-api-key')
 @Controller('seed')
 export class SeedController {
   constructor(private readonly seedService: SeedService) {}
@@ -65,6 +69,27 @@ export class SeedController {
     @Body() _input?: SeedShopifyCategoriesDto,
   ): Promise<AppApiResponse<SeedCatalogCategoriesSummary>> {
     return this.seedService.seedCatalogCategories(seedSecret);
+  }
+
+  @Post('category-options')
+  @ApiOperation({ summary: 'Seed category options and their values from the built-in definitions' })
+  @ApiHeader({
+    name: 'x-seed-secret',
+    required: true,
+    description: 'Must match SEED_API_KEY from the server environment',
+  })
+  @ApiBody({
+    type: SeedCategoryOptionsDto,
+    required: false,
+    description: 'No body required. Categories must already exist (run POST /seed/category first).',
+  })
+  @ApiResponse({ status: 201, description: 'Category options seeded successfully' })
+  @ApiResponse({ status: 404, description: 'A referenced category slug was not found' })
+  async seedCategoryOptions(
+    @Headers('x-seed-secret') seedSecret: string | undefined,
+    @Body() _input?: SeedCategoryOptionsDto,
+  ): Promise<AppApiResponse<SeedCategoryOptionsSummary>> {
+    return this.seedService.seedCategoryOptions(seedSecret);
   }
 
   @Post('products')

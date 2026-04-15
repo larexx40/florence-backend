@@ -68,7 +68,7 @@ export function buildReceiptHtml(order: ReceiptOrder, logoDataUri: string): stri
     .map(
       (item) => `
       <tr>
-        <td class="item-name">${item.productName}<br><small>${item.variantName} — ${item.sku}</small></td>
+        <td class="item-name">${item.productName}<br><small>${item.variantTitle} — ${item.sku}</small></td>
         <td class="qty">${item.quantity}</td>
         <td class="price">₦${fmt(item.unitPrice)}</td>
         <td class="price">₦${fmt(item.lineTotal)}</td>

@@ -20,10 +20,13 @@ async function bootstrap() {
     .setDescription('Florence vendor e-commerce backend API')
     .setVersion('1.0')
     .addBearerAuth()
+    .addApiKey({ type: 'apiKey', name: 'x-api-key', in: 'header' }, 'x-api-key')
     .build();
 
   const port = process.env.PORT || 3000;
   const document = SwaggerModule.createDocument(app, config);
+  // require x-api-key on every operation in the Swagger UI
+  document.security = [{ 'x-api-key': [] }];
   SwaggerModule.setup('api/docs', app, document);
 
 

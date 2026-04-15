@@ -4,6 +4,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
   getSchemaPath,
 } from '@nestjs/swagger';
@@ -20,6 +21,7 @@ import { LoginResponseDto, RefreshTokenDataDto } from './responses/auth.response
 import { UserDto } from 'src/common/dto/user.dto';
 
 @ApiTags('auth')
+@ApiSecurity('x-api-key')
 // Register nested DTOs so getSchemaPath() can reference them
 @ApiExtraModels(LoginResponseDto, RefreshTokenDataDto, UserDto)
 @Controller('auth')

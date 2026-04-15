@@ -1,19 +1,19 @@
 import {
   Injectable,
   InternalServerErrorException,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ApiResponse } from 'src/common/types';
+import {
+  categoryOptionsSeedData,
+} from './data/category-options.seed';
 import { CategoryService } from 'src/category/category.service';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { OptionService } from 'src/product/option/option.service';
-import { AddProductOptionDto } from 'src/product/option/dto/option.dto';
 import { ProductService } from 'src/product/product.service';
 import { CreateProductDto } from 'src/product/dto/product.dto';
-import { VariantService } from 'src/product/variant/variant.service';
-import { CreateVariantDto } from 'src/product/variant/dto/variant.dto';
 import { RunSeedDto } from './dto/seed.dto';
 import { SeedRunSummary, runSeed } from './seed.runner';
 
@@ -81,6 +81,10 @@ export interface SeedCatalogCategoriesSummary {
   };
 }
 
+export interface SeedCategoryOptionsSummary {
+  categoryOptions: { created: number; skipped: number };
+}
+
 export interface SeedCatalogProductsSummary {
   filePath: string;
   categories: {
@@ -115,8 +119,6 @@ export class SeedService {
     private readonly prisma: PrismaService,
     private readonly categoryService: CategoryService,
     private readonly productService: ProductService,
-    private readonly optionService: OptionService,
-    private readonly variantService: VariantService,
   ) {}
 
   async run(
@@ -159,6 +161,56 @@ export class SeedService {
       status: true,
       message: 'Catalog categories seeded successfully',
       data: { filePath, categories: summary },
+    };
+  }
+
+  async seedCategoryOptions(
+    seedSecret: string | undefined,
+  ): Promise<ApiResponse<SeedCategoryOptionsSummary>> {
+    this.assertSeedSecret(seedSecret);
+
+    const summary: SeedCategoryOptionsSummary = {
+      categoryOptions: { created: 0, skipped: 0 },
+    };
+
+    for (const entry of categoryOptionsSeedData) {
+      const category = await this.prisma.category.findUnique({
+        where: { slug: entry.categorySlug },
+      });
+
+      if (!category) {
+        throw new NotFoundException(
+          `Category slug "${entry.categorySlug}" not found. Run POST /seed/category first.`,
+        );
+      }
+
+      for (const option of entry.options) {
+        const existing = await this.prisma.categoryOption.findUnique({
+          where: {
+            categoryId_name: { categoryId: category.id, name: option.name },
+          },
+        });
+
+        if (!existing) {
+          await this.prisma.categoryOption.create({
+            data: {
+              categoryId: category.id,
+              name: option.name,
+              position: option.position,
+              isRequired: option.isRequired,
+            },
+          });
+          summary.categoryOptions.created += 1;
+        } else {
+          summary.categoryOptions.skipped += 1;
+        }
+      }
+    }
+
+    return {
+      status: true,
+      message: 'Category options seeded successfully',
+      data: summary,
     };
   }
 
@@ -210,22 +262,34 @@ export class SeedService {
       }
 
       for (const option of entry.options) {
-        const productOption = await this.prisma.productOption.findFirst({
+        // normalise Shopify option names to match CategoryOption names
+        // e.g. "Colors" / "Colours" → "Color", "Sizes" → "Size"
+        const normalised = this.normaliseOptionName(option.name);
+
+        const catOption = await this.prisma.categoryOption.findFirst({
           where: {
-            productId: product.id,
-            option: { name: option.name },
+            categoryId: category.id,
+            name: { equals: normalised, mode: 'insensitive' },
           },
-          include: { option: true },
         });
 
-        let ensuredProductOptionId = productOption?.id;
-        if (!ensuredProductOptionId) {
-          const added = await this.optionService.addOption(product.id, {
-            name: option.name,
-            displayName: option.displayName ?? option.name,
-            position: option.position ?? 0,
-          } satisfies AddProductOptionDto);
-          ensuredProductOptionId = added.data.id;
+        if (!catOption) {
+          // category has no matching option type — skip
+          summary.options.skipped += 1;
+          continue;
+        }
+
+        // find or create ProductOption: links this product to the category option type
+        let productOption = await this.prisma.productOption.findUnique({
+          where: {
+            productId_categoryOptionId: { productId: product.id, categoryOptionId: catOption.id },
+          },
+        });
+
+        if (!productOption) {
+          productOption = await this.prisma.productOption.create({
+            data: { productId: product.id, categoryOptionId: catOption.id, position: catOption.position },
+          });
           summary.options.created += 1;
         } else {
           summary.options.skipped += 1;
@@ -233,14 +297,17 @@ export class SeedService {
 
         for (let index = 0; index < option.values.length; index += 1) {
           const value = option.values[index];
-          const existingValue = await this.prisma.optionValue.findFirst({
-            where: { productOptionId: ensuredProductOptionId, value },
+
+          // find or create ProductOptionValue under this product's option
+          const existing = await this.prisma.productOptionValue.findUnique({
+            where: {
+              productOptionId_value: { productOptionId: productOption.id, value },
+            },
           });
 
-          if (!existingValue) {
-            await this.optionService.addValue(product.id, ensuredProductOptionId, {
-              value,
-              position: index,
+          if (!existing) {
+            await this.prisma.productOptionValue.create({
+              data: { productOptionId: productOption.id, value, position: index },
             });
             summary.optionValues.created += 1;
           } else {
@@ -250,7 +317,7 @@ export class SeedService {
       }
 
       for (const variant of entry.variants) {
-        const existingVariant = await this.prisma.variant.findUnique({
+        const existingVariant = await this.prisma.productVariant.findUnique({
           where: { sku: variant.sku },
         });
         if (existingVariant) {
@@ -258,70 +325,68 @@ export class SeedService {
           continue;
         }
 
-        const optionValueIds: string[] = [];
+        // resolve each selected option to its ProductOptionValue id
+        const productOptionValueIds: string[] = [];
         for (const selected of variant.selectedOptions) {
-          const optionValue = await this.prisma.optionValue.findFirst({
+          const normalised = this.normaliseOptionName(selected.optionName);
+
+          const pov = await this.prisma.productOptionValue.findFirst({
             where: {
               value: selected.value,
               productOption: {
                 productId: product.id,
-                option: { name: selected.optionName },
+                categoryOption: {
+                  categoryId: category.id,
+                  name: { equals: normalised, mode: 'insensitive' },
+                },
               },
             },
             select: { id: true },
           });
 
-          if (!optionValue) {
-            throw new InternalServerErrorException(
-              `Missing option value "${selected.optionName}:${selected.value}" for product "${entry.product.slug}"`,
-            );
-          }
+          if (!pov) break; // option type has no match — variant cannot be fully resolved
 
-          optionValueIds.push(optionValue.id);
+          productOptionValueIds.push(pov.id);
         }
 
-        await this.variantService.create(product.id, {
-          sku: variant.sku,
-          price: Number(variant.price),
-          compareAtPrice: variant.compareAtPrice ?? undefined,
-          stockQty: variant.stockQty,
-          weightKg: variant.weightKg ?? undefined,
-          optionValueIds,
-        } satisfies CreateVariantDto);
+        if (productOptionValueIds.length !== variant.selectedOptions.length) {
+          summary.variants.skipped += 1;
+          continue;
+        }
+
+        const created = await this.prisma.productVariant.create({
+          data: {
+            productId: product.id,
+            sku: variant.sku,
+            title: variant.title,
+            price: variant.price,
+            compareAtPrice: variant.compareAtPrice ?? null,
+            stockQty: variant.stockQty,
+            isActive: variant.isActive,
+            weightKg: variant.weightKg ?? null,
+          },
+        });
+
+        for (const productOptionValueId of productOptionValueIds) {
+          await this.prisma.variantOptionValue.create({
+            data: { variantId: created.id, productOptionValueId },
+          });
+        }
+
         summary.variants.created += 1;
       }
 
       for (const image of entry.images) {
-        const s3Key = `external/shopify/${entry.product.slug}/${image.sourceImageId ?? this.slugify(image.url)}`;
-        const existingImage = await this.prisma.image.findUnique({
-          where: { s3Key },
+        const existing = await this.prisma.productImage.findFirst({
+          where: { productId: product.id, url: image.url },
         });
 
-        const ensuredImage = existingImage
-          ? existingImage
-          : await this.prisma.image.create({
-              data: {
-                s3Key,
-                url: image.url,
-                mimeType: this.detectMimeType(image.url),
-                sizeBytes: 0,
-                altText: image.altText ?? null,
-                uploadedBy: 'seed:shopify',
-              },
-            });
-
-        const link = await this.prisma.productImage.findFirst({
-          where: {
-            productId: product.id,
-            imageId: ensuredImage.id,
-          },
-        });
-
-        if (!link) {
+        if (!existing) {
           await this.prisma.productImage.create({
             data: {
               productId: product.id,
-              imageId: ensuredImage.id,
+              url: image.url,
+              altText: image.altText ?? null,
               position: image.position ?? 0,
             },
           });
@@ -396,15 +461,14 @@ export class SeedService {
     return summary;
   }
 
-  private slugify(value: string): string {
-    return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  }
-
-  private detectMimeType(url: string): string {
-    const lowered = url.toLowerCase();
-    if (lowered.includes('.png')) return 'image/png';
-    if (lowered.includes('.webp')) return 'image/webp';
-    if (lowered.includes('.gif')) return 'image/gif';
-    return 'image/jpeg';
+  // Normalises Shopify option names to match CategoryOption names.
+  // Shopify exports plurals and British spellings; our categories use singular American.
+  // e.g. "Colors" → "color", "Colours" → "color", "Sizes" → "size"
+  private normaliseOptionName(raw: string): string {
+    return raw
+      .toLowerCase()
+      .replace(/colou?rs?/, 'color')
+      .replace(/sizes?/, 'size')
+      .trim();
   }
 }

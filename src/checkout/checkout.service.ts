@@ -34,14 +34,7 @@ const VARIANT_ORDER_INCLUDE = {
       prerequisiteVariant: { select: { id: true, sku: true } },
     },
   },
-  optionValues: {
-    include: {
-      optionValue: {
-        include: { productOption: { include: { option: true } } },
-      },
-    },
-  },
-} satisfies Prisma.VariantInclude;
+} satisfies Prisma.ProductVariantInclude;
 
 // ── Discount calculator ───────────────────────────────────────────────────────
 
@@ -77,16 +70,6 @@ function calcLineDiscount(
   }
 
   return new Decimal(0);
-}
-
-// Builds a human-readable variant label from its option values
-function buildVariantName(
-  variant: Prisma.VariantGetPayload<{ include: typeof VARIANT_ORDER_INCLUDE }>,
-): string {
-  const parts = variant.optionValues
-    .sort((a, b) => (a.optionValue.productOption.position ?? 0) - (b.optionValue.productOption.position ?? 0))
-    .map((ov) => ov.optionValue.value);
-  return parts.join(' / ') || 'Default';
 }
 
 @Injectable()
@@ -255,7 +238,7 @@ export class CheckoutService {
     if (!dto.items.length) throw new BadRequestException('Order must have at least one item');
 
     const variantIds = dto.items.map((i) => i.variantId);
-    const variants = await this.prisma.variant.findMany({
+    const variants = await this.prisma.productVariant.findMany({
       where: { id: { in: variantIds } },
       include: VARIANT_ORDER_INCLUDE,
     });
@@ -292,7 +275,7 @@ export class CheckoutService {
       variantId: string;
       productId: string;
       productName: string;
-      variantName: string;
+      variantTitle: string;
       sku: string;
       quantity: number;
       unitPrice: Decimal;
@@ -310,7 +293,7 @@ export class CheckoutService {
         variantId: variant.id,
         productId: variant.productId,
         productName: variant.product.name,
-        variantName: buildVariantName(variant),
+        variantTitle: variant.title,
         sku: variant.sku,
         quantity: item.quantity,
         unitPrice,
@@ -330,7 +313,7 @@ export class CheckoutService {
     const order = await this.prisma.$transaction(async (tx) => {
       // Decrement stock atomically for each variant
       for (const line of lineItems) {
-        const updated = await tx.variant.updateMany({
+        const updated = await tx.productVariant.updateMany({
           where: { id: line.variantId, stockQty: { gte: line.quantity } },
           data: { stockQty: { decrement: line.quantity } },
         });
@@ -358,7 +341,7 @@ export class CheckoutService {
               productId: l.productId,
               variantId: l.variantId,
               productName: l.productName,
-              variantName: l.variantName,
+              variantTitle: l.variantTitle,
               sku: l.sku,
               quantity: l.quantity,
               unitPrice: l.unitPrice,
@@ -434,7 +417,7 @@ export class CheckoutService {
         firstName: user.firstName ?? 'Customer',
         orderNumber,
         items: lineItems.map((l) => ({
-          name: `${l.productName} (${l.variantName})`,
+          name: `${l.productName} (${l.variantTitle})`,
           quantity: l.quantity,
           unitPrice: Number(l.unitPrice),
           lineTotal: Number(l.lineTotal),

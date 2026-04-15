@@ -12,6 +12,7 @@ import {
     ApiOperation,
     ApiParam,
     ApiResponse,
+    ApiSecurity,
     ApiTags,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/guards/account.guard';
@@ -22,6 +23,7 @@ import { CreateCityDto, CreateLgaDto, CreateStateDto } from './dto/location.dto'
 import { AdminGuard } from 'src/guards/admin.guards';
 
 @ApiTags('locations')
+@ApiSecurity('x-api-key')
 @Controller('locations')
 export class LocationController {
     constructor(private readonly locationService: LocationService) {}

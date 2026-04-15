@@ -16,6 +16,7 @@ import {
   ApiOperation,
   ApiParam,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/guards/account.guard';
@@ -32,6 +33,7 @@ import {
 } from './dto/variant.dto';
 
 @ApiTags('product variants')
+@ApiSecurity('x-api-key')
 @Controller('products/:productId/variants')
 export class VariantController {
   constructor(private readonly variantService: VariantService) {}

@@ -18,6 +18,7 @@ import {
     ApiOperation,
     ApiParam,
     ApiResponse,
+    ApiSecurity,
     ApiTags,
     getSchemaPath,
 } from '@nestjs/swagger';
@@ -40,6 +41,7 @@ import {
 import { PaginatedDataDto } from 'src/common/types/response.type';
 
 @ApiTags('logistics')
+@ApiSecurity('x-api-key')
 @ApiExtraModels(
     LogisticsCompanyResponseDto,
     LogisticsListResponseDto,

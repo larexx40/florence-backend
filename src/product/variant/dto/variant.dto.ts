@@ -81,13 +81,25 @@ export class CreateVariantDto {
   @IsNumber()
   weightKg?: number;
 
+  @ApiPropertyOptional({ example: 1, minimum: 1, description: 'Minimum qty per order for this variant — overrides product default' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  minQty?: number;
+
+  @ApiPropertyOptional({ example: 100, minimum: 1, description: 'Maximum qty per order for this variant' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxQty?: number;
+
   @ApiProperty({
-    description: 'Array of OptionValue IDs that define this variant combination. One ID per option.',
-    example: ['uuid-of-black-value'],
+    description: 'Array of ProductOptionValue IDs that define this variant combination. One ID per option dimension.',
+    example: ['uuid-of-black-pov', 'uuid-of-l-pov'],
   })
   @IsArray()
-  @IsUUID('4', { each: true, message: 'Each optionValueId must be a valid UUID' })
-  optionValueIds: string[];
+  @IsUUID('4', { each: true, message: 'Each productOptionValueId must be a valid UUID' })
+  productOptionValueIds: string[];
 }
 
 export class UpdateVariantDto {
@@ -115,6 +127,18 @@ export class UpdateVariantDto {
   @IsOptional()
   @IsNumber()
   weightKg?: number;
+
+  @ApiPropertyOptional({ example: 5, minimum: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  minQty?: number;
+
+  @ApiPropertyOptional({ example: 50, minimum: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxQty?: number;
 }
 
 export class UpdateStockDto {

@@ -1,0 +1,204 @@
+// Category option definitions used by the seed endpoint.
+// Each entry declares what options a category supports and the full value pool.
+// Products in a category pick their subset from these values via ProductOptionValue.
+//
+// Run order: categories must exist first (POST /seed/category),
+// then POST /seed/category-options, then POST /seed/products.
+
+export interface CategoryOptionValueSeed {
+  value: string;
+  displayName?: string;
+  position: number;
+}
+
+export interface CategoryOptionSeed {
+  name: string;
+  displayName: string;
+  position: number;
+  isRequired: boolean;
+  values: CategoryOptionValueSeed[];
+}
+
+export interface CategoryOptionsSeedEntry {
+  categorySlug: string;
+  options: CategoryOptionSeed[];
+}
+
+export const categoryOptionsSeedData: CategoryOptionsSeedEntry[] = [
+  {
+    categorySlug: 'bags',
+    options: [
+      {
+        name: 'Color',
+        displayName: 'Color',
+        position: 0,
+        isRequired: false,
+        values: [
+          { value: 'Black',  position: 0 },
+          { value: 'Brown',  position: 1 },
+          { value: 'White',  position: 2 },
+          { value: 'Blue',   position: 3 },
+          { value: 'Pink',   position: 4 },
+          { value: 'Red',    position: 5 },
+          { value: 'Green',  position: 6 },
+          { value: 'Gold',   position: 7 },
+          { value: 'Silver', position: 8 },
+          { value: 'Purple', position: 9 },
+          { value: 'Yellow', position: 10 },
+          { value: 'Nude',   position: 11 },
+          { value: 'Ash',    position: 12 },
+          { value: 'Beige',  position: 13 },
+          { value: 'Grey',   position: 14 },
+        ],
+      },
+    ],
+  },
+
+  {
+    categorySlug: 'shoes',
+    options: [
+      {
+        name: 'Color',
+        displayName: 'Color',
+        position: 0,
+        isRequired: true,
+        values: [
+          { value: 'Black',  position: 0 },
+          { value: 'Brown',  position: 1 },
+          { value: 'White',  position: 2 },
+          { value: 'Pink',   position: 3 },
+          { value: 'Red',    position: 4 },
+          { value: 'Green',  position: 5 },
+          { value: 'Gold',   position: 6 },
+          { value: 'Silver', position: 7 },
+          { value: 'Ash',    position: 8 },
+          { value: 'Nude',   position: 9 },
+          { value: 'Blue',   position: 10 },
+        ],
+      },
+      {
+        name: 'Size',
+        displayName: 'Size',
+        position: 1,
+        isRequired: true,
+        values: [
+          // children sizes
+          { value: '24', position: 0 },
+          { value: '25', position: 1 },
+          { value: '26', position: 2 },
+          { value: '27', position: 3 },
+          { value: '28', position: 4 },
+          { value: '29', position: 5 },
+          // adult sizes
+          { value: '36', position: 6 },
+          { value: '37', position: 7 },
+          { value: '38', position: 8 },
+          { value: '39', position: 9 },
+          { value: '40', position: 10 },
+          { value: '41', position: 11 },
+          { value: '42', position: 12 },
+          { value: '43', position: 13 },
+          { value: '44', position: 14 },
+          { value: '45', position: 15 },
+        ],
+      },
+    ],
+  },
+
+  {
+    categorySlug: 'slippers',
+    options: [
+      {
+        name: 'Color',
+        displayName: 'Color',
+        position: 0,
+        isRequired: false,
+        values: [
+          { value: 'Black',  position: 0 },
+          { value: 'Brown',  position: 1 },
+          { value: 'White',  position: 2 },
+          { value: 'Pink',   position: 3 },
+          { value: 'Blue',   position: 4 },
+          { value: 'Nude',   position: 5 },
+          { value: 'Grey',   position: 6 },
+        ],
+      },
+      {
+        name: 'Size',
+        displayName: 'Size',
+        position: 1,
+        isRequired: true,
+        values: [
+          { value: '36', position: 0 },
+          { value: '37', position: 1 },
+          { value: '38', position: 2 },
+          { value: '39', position: 3 },
+          { value: '40', position: 4 },
+          { value: '41', position: 5 },
+          { value: '42', position: 6 },
+          { value: '43', position: 7 },
+          { value: '44', position: 8 },
+          { value: '45', position: 9 },
+        ],
+      },
+    ],
+  },
+
+  {
+    categorySlug: 'phone-accessories',
+    options: [
+      {
+        name: 'Color',
+        displayName: 'Color',
+        position: 0,
+        isRequired: false,
+        values: [
+          { value: 'Black',     position: 0 },
+          { value: 'White',     position: 1 },
+          { value: 'Clear',     position: 2 },
+          { value: 'Pink',      position: 3 },
+          { value: 'Blue',      position: 4 },
+          { value: 'Red',       position: 5 },
+          { value: 'Gold',      position: 6 },
+          { value: 'Silver',    position: 7 },
+          { value: 'Purple',    position: 8 },
+        ],
+      },
+      {
+        name: 'Model',
+        displayName: 'Phone Model',
+        position: 1,
+        isRequired: false,
+        values: [
+          { value: 'iPhone 13',      position: 0 },
+          { value: 'iPhone 14',      position: 1 },
+          { value: 'iPhone 15',      position: 2 },
+          { value: 'iPhone 15 Pro',  position: 3 },
+          { value: 'Samsung S23',    position: 4 },
+          { value: 'Samsung S24',    position: 5 },
+          { value: 'Tecno',          position: 6 },
+          { value: 'Infinix',        position: 7 },
+        ],
+      },
+    ],
+  },
+
+  {
+    categorySlug: 'home-kitchen',
+    options: [
+      {
+        name: 'Quantity',
+        displayName: 'Quantity',
+        position: 0,
+        isRequired: false,
+        values: [
+          { value: '1pc',    position: 0 },
+          { value: '2pcs',   position: 1 },
+          { value: '3pcs',   position: 2 },
+          { value: '6pcs',   position: 3 },
+          { value: 'Dozen',  position: 4 },
+        ],
+      },
+    ],
+  },
+];

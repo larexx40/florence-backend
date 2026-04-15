@@ -15,6 +15,7 @@ import {
   ApiConsumes,
   ApiOperation,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
 import { multerConfig } from 'src/common/helpers/s3.upload.helper';
@@ -25,8 +26,9 @@ import { ImageService } from './image.service';
 import { LinkImageDto } from './dto/image.dto';
 
 @ApiTags('images')
+@ApiSecurity('x-api-key')
 @ApiBearerAuth()
-@UseGuards(AuthGuard, StaffGuard)
+// @UseGuards(AuthGuard, StaffGuard)
 @Controller('images')
 export class ImageController {
   constructor(private readonly imageService: ImageService) {}

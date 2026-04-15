@@ -13,11 +13,13 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { UploadService } from './upload.service';
-import { ApiOperation, ApiConsumes, ApiBody, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiOperation, ApiConsumes, ApiBody, ApiResponse, ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { ImageType } from 'src/common/constants/enum';
 import { AuthGuard } from 'src/guards/account.guard';
 import { IRequest } from 'src/common/types';
 
+@ApiTags('upload')
+@ApiSecurity('x-api-key')
 @Controller('v1/upload')
 export class UploadController {
   constructor(private readonly uploadService: UploadService) { }

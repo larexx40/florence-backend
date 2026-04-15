@@ -16,6 +16,7 @@ import {
   ApiOperation,
   ApiParam,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/guards/account.guard';
@@ -27,6 +28,7 @@ import { ProductService } from './product.service';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
 
 @ApiTags('products')
+@ApiSecurity('x-api-key')
 @Controller('products')
 export class ProductController {
   constructor(private readonly productService: ProductService) {}

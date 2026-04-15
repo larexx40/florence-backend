@@ -4,6 +4,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
   getSchemaPath,
 } from '@nestjs/swagger';
@@ -13,6 +14,7 @@ import { CheckoutService } from './checkout.service';
 import { PlaceOrderDto, ResolveShippingDto } from './dto/checkout.dto';
 
 @ApiTags('checkout')
+@ApiSecurity('x-api-key')
 @ApiExtraModels(ShippingAddressResponseDto, LogisticsCompanyResponseDto)
 @Controller('checkout')
 export class CheckoutController {

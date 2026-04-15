@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, IsUUID, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class LinkImageDto {
@@ -17,9 +17,15 @@ export class LinkImageDto {
 }
 
 export class AttachImageDto {
-  @ApiProperty({ example: 'uuid-of-image', description: 'Image record UUID returned by /images/upload or /images/link' })
-  @IsUUID('4')
-  imageId: string;
+  @ApiProperty({ example: 'https://cdn.example.com/images/product.jpg', description: 'Image URL returned by /images/upload or /images/link' })
+  @IsNotEmpty()
+  @IsUrl()
+  url: string;
+
+  @ApiPropertyOptional({ example: 'Product front view' })
+  @IsOptional()
+  @IsString()
+  altText?: string;
 
   @ApiPropertyOptional({ example: 0, minimum: 0, description: 'Display position — lower = shown first' })
   @IsOptional()

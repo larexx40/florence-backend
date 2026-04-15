@@ -20,6 +20,7 @@ import {
     ApiParam,
     ApiQuery,
     ApiResponse,
+    ApiSecurity,
     ApiTags,
     getSchemaPath,
 } from '@nestjs/swagger';
@@ -33,6 +34,7 @@ import { CreateShippingAddressDto, UpdateShippingAddressDto } from './dto/shippi
 import { ShippingAddressResponseDto } from './dto/response.dto';
 
 @ApiTags('shipping-addresses')
+@ApiSecurity('x-api-key')
 @ApiBearerAuth()
 @ApiExtraModels(ShippingAddressResponseDto)
 @Controller('shipping-addresses')

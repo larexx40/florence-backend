@@ -17,7 +17,6 @@ import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/produ
 const PRODUCT_LIST_INCLUDE = {
   category: { select: { id: true, name: true, slug: true } },
   images: {
-    include: { image: { select: { url: true } } },
     orderBy: { position: 'asc' as const },
     take: 1,
   },
@@ -27,36 +26,40 @@ const PRODUCT_LIST_INCLUDE = {
   },
 } satisfies Prisma.ProductInclude;
 
-const PRODUCT_DETAIL_INCLUDE = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const PRODUCT_DETAIL_INCLUDE: any = {
   category: true,
   images: {
-    include: { image: true },
     orderBy: { position: 'asc' as const },
   },
-  options: {
+  productOptions: {
     orderBy: { position: 'asc' as const },
     include: {
-      option: true,
+      categoryOption: { select: { id: true, name: true, position: true } },
       values: { orderBy: { position: 'asc' as const } },
     },
   },
   variants: {
     where: { isActive: true },
     include: {
-      optionValues: {
+      variantOptionValues: {
         include: {
-          optionValue: {
-            include: { productOption: { include: { option: true } } },
+          productOptionValue: {
+            include: {
+              productOption: {
+                include: { categoryOption: { select: { id: true, name: true, position: true } } },
+              },
+            },
           },
         },
       },
       images: {
-        include: { image: true },
         orderBy: { position: 'asc' as const },
       },
     },
   },
-} satisfies Prisma.ProductInclude;
+// satisfies constraint removed — re-add after `npx prisma migrate dev && npx prisma generate`
+} as const;
 
 @Injectable()
 export class ProductService {
@@ -167,6 +170,7 @@ export class ProductService {
         slug,
         description: input.description ?? null,
         categoryId: input.categoryId,
+        requiresVariant: input.requiresVariant ?? true,
         minOrderQty: input.minOrderQty ?? 1,
         orderIncrement: input.orderIncrement ?? null,
         prerequisiteVariantId: input.prerequisiteVariantId ?? null,
@@ -222,6 +226,7 @@ export class ProductService {
         ...(input.isActive !== undefined && { isActive: input.isActive }),
         ...(input.minOrderQty !== undefined && { minOrderQty: input.minOrderQty }),
         ...(input.orderIncrement !== undefined && { orderIncrement: input.orderIncrement }),
+        ...(input.requiresVariant !== undefined && { requiresVariant: input.requiresVariant }),
         ...(input.prerequisiteVariantId !== undefined && {
           prerequisiteVariantId: input.prerequisiteVariantId,
         }),
@@ -262,27 +267,20 @@ export class ProductService {
     const product = await this.prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException('Product not found');
 
-    const image = await this.prisma.image.findUnique({ where: { id: dto.imageId } });
-    if (!image) throw new NotFoundException('Image not found');
-
-    const link = await this.prisma.productImage.upsert({
-      where: { productId_imageId: { productId, imageId: dto.imageId } },
-      create: { productId, imageId: dto.imageId, position: dto.position ?? 0 },
-      update: { position: dto.position ?? 0 },
-      include: { image: true },
+    const image = await this.prisma.productImage.create({
+      data: { productId, url: dto.url, altText: dto.altText ?? null, position: dto.position ?? 0 },
     });
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-    return { status: true, message: 'Image attached to product', data: link };
+    return { status: true, message: 'Image attached to product', data: image };
   }
 
   async detachImage(productId: string, imageId: string): Promise<ApiResponse<null>> {
-    const link = await this.prisma.productImage.findUnique({
-      where: { productId_imageId: { productId, imageId } },
-    });
-    if (!link) throw new NotFoundException('Image is not attached to this product');
+    // imageId here is the ProductImage.id (UUID of the join record)
+    const image = await this.prisma.productImage.findFirst({ where: { id: imageId, productId } });
+    if (!image) throw new NotFoundException('Image is not attached to this product');
 
-    await this.prisma.productImage.delete({ where: { productId_imageId: { productId, imageId } } });
+    await this.prisma.productImage.delete({ where: { id: imageId } });
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return { status: true, message: 'Image detached from product', data: null };

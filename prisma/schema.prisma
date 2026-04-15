@@ -75,7 +75,7 @@ enum StoreCreditReason {
   ADMIN_ADJUSTMENT
 }
 
-// ── Models ──────────────────────────────────────────────────────────────────
+// ── Users & Auth ─────────────────────────────────────────────────────────────
 
 model User {
   id                 String    @id @default(uuid()) @map("id")
@@ -86,8 +86,8 @@ model User {
   businessName       String?   @map("business_name")
   role               Role      @default(CUSTOMER) @map("role")
   isActive           Boolean   @default(true) @map("is_active")
-  password           String?   
-  isProfileComplete   Boolean   @default(false) @map("is_profile_complete")
+  password           String?   @map("password")
+  isProfileComplete  Boolean   @default(false) @map("is_profile_complete")
   isEmailVerified    Boolean   @default(false) @map("is_email_verified")
   // denormalised cache — always recompute from StoreCreditTransaction ledger for accuracy
   storeCreditBalance Decimal   @default(0) @map("store_credit_balance") @db.Decimal(12, 2)
@@ -143,6 +143,20 @@ model Address {
   @@map("addresses")
 }
 
+// ── Catalogue: Categories & Options ─────────────────────────────────────────
+//
+// Categories own their option types.
+// A product inherits those option types by belonging to a category.
+//
+//   Category "Bags"    → CategoryOption "Color"  → OptionValue "White", "Blue", "Black"
+//                      → CategoryOption "Size"   → OptionValue "S", "M", "L"
+//   Category "Clothes" → CategoryOption "Color"  → OptionValue "White", "Blue"
+//                      → CategoryOption "Gender" → OptionValue "Male", "Female"
+//                      → CategoryOption "Waist"  → OptionValue "28", "30", "32"
+//
+// Products then declare which subset of those values they come in
+// via ProductOptionValue. Variants are the generated combinations.
+
 // Supports flat tree (parent_id nullable) for subcategories
 model Category {
   id          String   @id @default(uuid()) @map("id")
@@ -155,14 +169,37 @@ model Category {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
-  children Category[] @relation("CategoryTree")
-  products Product[]
+  parent          Category?        @relation("CategoryTree", fields: [parentId], references: [id])
+  children        Category[]       @relation("CategoryTree")
+  categoryOptions CategoryOption[]
+  products        Product[]
 
   @@index([parentId])
   @@index([slug])
   @@map("categories")
 }
+
+// Option types that belong to a category — e.g. Bags → Color, Size
+// Values are no longer stored here; each product declares its own values via ProductOption → ProductOptionValue
+model CategoryOption {
+  id          String   @id @default(uuid()) @map("id")
+  categoryId  String   @map("category_id")
+  name        String   @map("name")       // "Color", "Size", "Material"
+  position    Int      @default(0) @map("position")
+  isRequired  Boolean  @default(false) @map("is_required")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  category       Category        @relation(fields: [categoryId], references: [id])
+  productOptions ProductOption[]
+
+  // one option name per category — no duplicate "Color" under Bags
+  @@unique([categoryId, name])
+  @@index([categoryId])
+  @@map("category_options")
+}
+
+// ── Products ─────────────────────────────────────────────────────────────────
 
 model Discount {
   id        String        @id @default(uuid()) @map("id")
@@ -197,8 +234,6 @@ model DiscountTier {
   @@map("discount_tiers")
 }
 
-// ── Product catalogue ────────────────────────────────────────────────────────
-
 model Product {
   id                    String   @id @default(uuid()) @map("id")
   name                  String   @map("name")
@@ -206,6 +241,8 @@ model Product {
   description           String?  @map("description")
   categoryId            String   @map("category_id")
   isActive              Boolean  @default(true) @map("is_active")
+  // false = product sold as-is, no variant selector shown to buyer
+  requiresVariant       Boolean  @default(true) @map("requires_variant")
   minOrderQty           Int      @default(1) @map("min_order_qty")
   // quantity must be a multiple of this value; null = no restriction
   orderIncrement        Int?     @map("order_increment")
@@ -215,14 +252,14 @@ model Product {
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
-  category            Category        @relation(fields: [categoryId], references: [id])
-  discount            Discount?       @relation(fields: [discountId], references: [id])
-  prerequisiteVariant Variant?        @relation("PrerequisiteVariant", fields: [prerequisiteVariantId], references: [id])
-  options             ProductOption[]
-  variants            Variant[]       @relation("ProductVariants")
-  images              ProductImage[]
-  cartItems           CartItem[]
-  orderItems          OrderItem[]
+  category              Category             @relation(fields: [categoryId], references: [id])
+  discount              Discount?            @relation(fields: [discountId], references: [id])
+  prerequisiteVariant   ProductVariant?      @relation("PrerequisiteVariant", fields: [prerequisiteVariantId], references: [id])
+  productOptions        ProductOption[]
+  variants              ProductVariant[]     @relation("ProductVariants")
+  images                ProductImage[]
+  cartItems             CartItem[]
+  orderItems            OrderItem[]
 
   @@index([categoryId])
   @@index([discountId])
@@ -231,175 +268,128 @@ model Product {
   @@map("products")
 }
 
-// ── Options ──────────────────────────────────────────────────────────────────
-//
-// Option is a global type (Color, Size, Pack Size).
-// ProductOption scopes it to a specific product with a display position.
-// OptionValue holds the per-product values (e.g. "Black" for Bflo 226's Color).
-//
-// Real examples from the store:
-//   Bflo 226  → Color  : Black, Brown, Pink, White, Nude, Blue
-//   APRON     → Pack Size: 3pcs, Dozen
-//   Aromantic → Quantity: 50pcs, 100pcs, 500pcs
-
-// Global option type — reused across many products
-model Option {
-  id          String   @id @default(uuid()) @map("id")
-  name        String   @unique @map("name") // e.g. "Color", "Size", "Pack Size"
-  displayName String   @map("display_name") // label shown in the UI
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  productOptions ProductOption[]
-
-  @@map("options")
-}
-
-// Links one global Option to one Product, with display position
+// Which option types (from the category) this specific product uses.
+// e.g. Prada Bag uses Color + Size from the Bags category
 model ProductOption {
-  id        String   @id @default(uuid()) @map("id")
-  productId String   @map("product_id")
-  optionId  String   @map("option_id")
-  position  Int      @default(0) @map("position") // 0 = first selector shown
-  createdAt DateTime @default(now()) @map("created_at")
+  id               String   @id @default(uuid()) @map("id")
+  productId        String   @map("product_id")
+  categoryOptionId String   @map("category_option_id")
+  position         Int      @default(0) @map("position")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
-  product Product       @relation(fields: [productId], references: [id])
-  option  Option        @relation(fields: [optionId], references: [id])
-  values  OptionValue[]
+  product        Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  categoryOption CategoryOption       @relation(fields: [categoryOptionId], references: [id])
+  values         ProductOptionValue[]
 
-  @@unique([productId, optionId])
+  // each option type appears at most once per product
+  @@unique([productId, categoryOptionId])
   @@index([productId])
-  @@index([optionId])
+  @@index([categoryOptionId])
   @@map("product_options")
 }
 
-// Per-product option values, scoped through ProductOption
-// isActive = false means this value is disabled/sold out in the selector UI
-model OptionValue {
+// The concrete values an admin defines for one product option.
+// e.g. ProductOption(Color) → Black, White, Blue
+model ProductOptionValue {
   id              String   @id @default(uuid()) @map("id")
   productOptionId String   @map("product_option_id")
-  value           String   @map("value") // raw value: "Black", "35", "3pcs"
-  displayName     String?  @map("display_name") // override label if needed
+  value           String   @map("value")        // "Black", "XL", "Cotton"
+  displayName     String?  @map("display_name") // UI label override
+  colorHex        String?  @map("color_hex")    // "#000000" — for colour swatches
   position        Int      @default(0) @map("position")
-  // false = grey out this value in the UI (e.g. colour fully sold out across all its variants)
-  isActive        Boolean  @default(true) @map("is_active")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  productOption ProductOption        @relation(fields: [productOptionId], references: [id])
-  variantValues VariantOptionValue[]
+  productOption       ProductOption        @relation(fields: [productOptionId], references: [id], onDelete: Cascade)
+  variantOptionValues VariantOptionValue[]
 
+  // no duplicate values within the same product option
   @@unique([productOptionId, value])
   @@index([productOptionId])
-  @@map("option_values")
+  @@map("product_option_values")
 }
 
-// ── Variants ─────────────────────────────────────────────────────────────────
-//
-// One variant = one unique combination of option values for a product.
-//
-// Single-option examples (most products in this store):
-//   Bflo 226 Black        → VariantOptionValue(Color=Black)
-//   Aromantic scent 50pcs → VariantOptionValue(Quantity=50pcs)
-//
-// Multi-option example (future shoe/bag products):
-//   Shoe Red + Size 35    → VariantOptionValue(Color=Red) + VariantOptionValue(Size=35)
-//
-// Stock is tracked per Variant, not per OptionValue.
-// Price can differ per Variant (e.g. 50pcs ≠ 100pcs price for Aromantic scent).
-
-model Variant {
+// One row per unique purchasable combination.
+// Prada Bag White + L  → sku: PRADA-WH-L  | price: 25000 | stock: 3
+// Prada Bag Blue  + XL → sku: PRADA-BL-XL | price: 25000 | stock: 1
+model ProductVariant {
   id             String   @id @default(uuid()) @map("id")
   productId      String   @map("product_id")
   sku            String   @unique @map("sku")
+  // denormalised title for display without joining option values: "White / L"
+  title          String   @map("title")
   price          Decimal  @map("price") @db.Decimal(12, 2)
   compareAtPrice Decimal? @map("compare_at_price") @db.Decimal(12, 2)
   stockQty       Int      @default(0) @map("stock_qty")
   // false = this specific combination is disabled regardless of stock
   isActive       Boolean  @default(true) @map("is_active")
+  // per-variant quantity overrides — null falls back to product.minOrderQty / no cap
+  minQty         Int?     @map("min_qty")
+  maxQty         Int?     @map("max_qty")
   weightKg       Decimal? @map("weight_kg") @db.Decimal(8, 3)
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   product                 Product              @relation("ProductVariants", fields: [productId], references: [id])
-  // products that require this variant to be in cart first
+  // products that require this variant to be in the cart first
   prerequisiteForProducts Product[]            @relation("PrerequisiteVariant")
-  optionValues            VariantOptionValue[]
+  variantOptionValues     VariantOptionValue[]
   images                  VariantImage[]
   cartItems               CartItem[]
   orderItems              OrderItem[]
 
   @@index([productId])
   @@index([sku])
-  @@map("variants")
+  @@map("product_variants")
 }
 
-// Maps each variant to its selected OptionValue per option
-// One row per option dimension (single-option → 1 row; two-option → 2 rows per variant)
+// Maps each variant to the ProductOptionValues that define its combination.
+// One row per option dimension — Color/Size variant gets two rows.
+// Prada Bag Black/L → VariantOptionValue(Black) + VariantOptionValue(L)
 model VariantOptionValue {
-  id            String @id @default(uuid()) @map("id")
-  variantId     String @map("variant_id")
-  optionValueId String @map("option_value_id")
+  id                   String @id @default(uuid()) @map("id")
+  variantId            String @map("variant_id")
+  productOptionValueId String @map("product_option_value_id")
 
-  variant     Variant     @relation(fields: [variantId], references: [id])
-  optionValue OptionValue @relation(fields: [optionValueId], references: [id])
+  variant            ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  productOptionValue ProductOptionValue @relation(fields: [productOptionValueId], references: [id])
 
-  @@unique([variantId, optionValueId])
+  @@unique([variantId, productOptionValueId])
   @@index([variantId])
-  @@index([optionValueId])
+  @@index([productOptionValueId])
   @@map("variant_option_values")
 }
 
 // ── Images ───────────────────────────────────────────────────────────────────
 
-// Central S3 asset record — uploaded once, referenced by many products/variants
-model Image {
-  id         String   @id @default(uuid()) @map("id")
-  s3Key      String   @unique @map("s3_key")
-  url        String   @map("url")
-  mimeType   String   @map("mime_type")
-  sizeBytes  Int      @map("size_bytes")
-  altText    String?  @map("alt_text")
-  uploadedBy String   @map("uploaded_by")
-  createdAt  DateTime @default(now()) @map("created_at")
-
-  productImages ProductImage[]
-  variantImages VariantImage[]
-
-  @@map("images")
-}
-
-// Join table — one product can use many images; one image can appear on many products
+// Product-level gallery images
 model ProductImage {
   id        String   @id @default(uuid()) @map("id")
   productId String   @map("product_id")
-  imageId   String   @map("image_id")
+  url       String   @map("url")
+  altText   String?  @map("alt_text")
   position  Int      @default(0) @map("position")
   createdAt DateTime @default(now()) @map("created_at")
 
-  product Product @relation(fields: [productId], references: [id])
-  image   Image   @relation(fields: [imageId], references: [id])
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@unique([productId, imageId])
   @@index([productId])
-  @@index([imageId])
   @@map("product_images")
 }
 
-// Join table — one variant can use many images; one image can appear on many variants
+// Per-variant image — used to swap the hero image when a customer picks a colour
 model VariantImage {
   id        String   @id @default(uuid()) @map("id")
   variantId String   @map("variant_id")
-  imageId   String   @map("image_id")
+  url       String   @map("url")
+  altText   String?  @map("alt_text")
   position  Int      @default(0) @map("position")
   createdAt DateTime @default(now()) @map("created_at")
 
-  variant Variant @relation(fields: [variantId], references: [id])
-  image   Image   @relation(fields: [imageId], references: [id])
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
-  @@unique([variantId, imageId])
   @@index([variantId])
-  @@index([imageId])
   @@map("variant_images")
 }
 
@@ -407,7 +397,7 @@ model VariantImage {
 
 model Cart {
   id        String   @id @default(uuid()) @map("id")
-  // userId is unique — one active cart per user
+  // one active cart per user
   userId    String?  @unique @map("user_id")
   sessionId String?  @unique @map("session_id")
   createdAt DateTime @default(now()) @map("created_at")
@@ -430,9 +420,9 @@ model CartItem {
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  cart    Cart    @relation(fields: [cartId], references: [id])
-  product Product @relation(fields: [productId], references: [id])
-  variant Variant @relation(fields: [variantId], references: [id])
+  cart    Cart           @relation(fields: [cartId], references: [id])
+  product Product        @relation(fields: [productId], references: [id])
+  variant ProductVariant @relation(fields: [variantId], references: [id])
 
   // one row per variant per cart
   @@unique([cartId, variantId])
@@ -480,14 +470,14 @@ model Order {
   @@map("orders")
 }
 
-// product_name / variant_name / sku are snapshotted at order time — never rely on joined product for history
+// product_name / variant_title / sku are snapshotted at order time — never rely on joined product for history
 model OrderItem {
   id                String           @id @default(uuid()) @map("id")
   orderId           String           @map("order_id")
   productId         String           @map("product_id")
   variantId         String           @map("variant_id")
   productName       String           @map("product_name")
-  variantName       String           @map("variant_name")
+  variantTitle      String           @map("variant_title")
   sku               String           @map("sku")
   quantity          Int              @map("quantity")
   // set by admin when dispatching; shortfall triggers store credit
@@ -501,7 +491,7 @@ model OrderItem {
 
   order           Order                    @relation(fields: [orderId], references: [id])
   product         Product                  @relation(fields: [productId], references: [id])
-  variant         Variant                  @relation(fields: [variantId], references: [id])
+  variant         ProductVariant           @relation(fields: [variantId], references: [id])
   storeCreditTxns StoreCreditTransaction[]
 
   @@index([orderId])

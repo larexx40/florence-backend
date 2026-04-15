@@ -12,6 +12,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
   getSchemaPath,
 } from '@nestjs/swagger';
@@ -29,6 +30,7 @@ import { AdminGuard } from 'src/guards/admin.guards';
 import { StaffGuard } from 'src/guards/staff.guard';
 
 @ApiTags('admin')
+@ApiSecurity('x-api-key')
 @ApiBearerAuth()
 @ApiExtraModels(UserDto)
 @Controller('admin')

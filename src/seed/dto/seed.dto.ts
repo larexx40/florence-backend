@@ -80,4 +80,6 @@ export class RunSeedDto {
 
 export class SeedShopifyCategoriesDto {}
 
+export class SeedCategoryOptionsDto {}
+
 export class SeedShopifyProductsDto {}

@@ -121,6 +121,88 @@ export class UpdateCategoryDto {
   isActive?: boolean;
 }
 
+// ── Category Option DTOs ─────────────────────────────────────────────────────
+
+export class CreateCategoryOptionDto {
+  @ApiProperty({ example: 'Color' })
+  @IsNotEmpty()
+  @IsString()
+  name: string;
+
+  @ApiPropertyOptional({ example: 0, description: 'Display order within the category' })
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value, 10))
+  position?: number;
+
+  @ApiPropertyOptional({ example: false, description: 'Whether this option must be selected before checkout' })
+  @IsOptional()
+  @IsBoolean()
+  isRequired?: boolean;
+}
+
+export class UpdateCategoryOptionDto {
+  @ApiPropertyOptional({ example: 'Colour' })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value, 10))
+  position?: number;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  isRequired?: boolean;
+}
+
+export class OptionValueResponseDto {
+  @ApiProperty({ example: 'uuid' })
+  id: string;
+
+  @ApiProperty({ example: 'uuid-of-option' })
+  categoryOptionId: string;
+
+  @ApiProperty({ example: 'White' })
+  value: string;
+
+  @ApiPropertyOptional({ example: 'Off White', nullable: true })
+  displayName: string | null;
+
+  @ApiProperty({ example: 0 })
+  position: number;
+
+  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  createdAt: Date;
+
+  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  updatedAt: Date;
+}
+
+export class CategoryOptionResponseDto {
+  @ApiProperty({ example: 'uuid' })
+  id: string;
+
+  @ApiProperty({ example: 'uuid-of-category' })
+  categoryId: string;
+
+  @ApiProperty({ example: 'Color' })
+  name: string;
+
+  @ApiProperty({ example: 0 })
+  position: number;
+
+  @ApiProperty({ example: false })
+  isRequired: boolean;
+
+  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  createdAt: Date;
+
+  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  updatedAt: Date;
+}
+
 // ── Response DTOs ────────────────────────────────────────────────────────────
 
 export class SubcategoryResponseDto {

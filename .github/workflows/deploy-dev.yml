@@ -137,6 +137,7 @@ jobs:
             # ── System
             PORT=3000
             SEED_API_KEY=${{ secrets.SEED_API_KEY }}
+            API_KEY=${{ secrets.API_KEY }}
 
             EOF
 

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -11,12 +12,19 @@ import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
 import { generateUniqueSlug } from 'src/common/helpers/slug.helper';
 import {
+  deleteFileFromS3,
+  uploadFileToAWSS3,
+} from 'src/common/helpers/s3.upload.helper';
+import {
   CategoryListResponseDto,
+  CategoryOptionResponseDto,
   CategoryQueryDto,
   CategoryResponseDto,
   CategoryTreeResponseDto,
   CreateCategoryDto,
+  CreateCategoryOptionDto,
   UpdateCategoryDto,
+  UpdateCategoryOptionDto,
 } from './dto/category.dto';
 
 // ── Include shapes ───────────────────────────────────────────────────────────
@@ -59,6 +67,8 @@ function toTreeResponse(raw: any): CategoryTreeResponseDto {
 
 @Injectable()
 export class CategoryService {
+  private readonly logger = new Logger(CategoryService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
@@ -194,7 +204,10 @@ export class CategoryService {
 
   // ── Admin mutations ──────────────────────────────────────────────────────────
 
-  async create(input: CreateCategoryDto): Promise<ApiResponse<CategoryResponseDto>> {
+  async create(
+    input: CreateCategoryDto,
+    file?: Express.Multer.File,
+  ): Promise<ApiResponse<CategoryResponseDto>> {
     if (input.parentId) {
       const parent = await this.prisma.category.findUnique({ where: { id: input.parentId } });
       if (!parent) throw new NotFoundException('Parent category not found');
@@ -204,12 +217,20 @@ export class CategoryService {
       this.prisma.category.findUnique({ where: { slug: s } }).then(Boolean),
     );
 
+    let imageUrl: string | null = input.imageUrl ?? null;
+
+    if (file) {
+      this.validateImageFile(file);
+      const key = this.buildCategoryS3Key(file.mimetype);
+      imageUrl = await uploadFileToAWSS3(file, key, true, false);
+    }
+
     const raw = await this.prisma.category.create({
       data: {
         name: input.name,
         slug,
         description: input.description ?? null,
-        imageUrl: input.imageUrl ?? null,
+        imageUrl,
         parentId: input.parentId ?? null,
       },
       include: CATEGORY_INCLUDE,
@@ -223,7 +244,11 @@ export class CategoryService {
     };
   }
 
-  async update(id: string, input: UpdateCategoryDto): Promise<ApiResponse<CategoryResponseDto>> {
+  async update(
+    id: string,
+    input: UpdateCategoryDto,
+    file?: Express.Multer.File,
+  ): Promise<ApiResponse<CategoryResponseDto>> {
     const category = await this.findOrThrow(id);
 
     // explicit slug override: validate uniqueness
@@ -256,13 +281,33 @@ export class CategoryService {
       }
     }
 
+    // ── Image resolution ─────────────────────────────────────────────────────
+    // file uploaded → upload to S3, delete old in background
+    // imageUrl explicitly provided → use it, delete old in background if changed
+    // neither → leave existing imageUrl untouched (omit from update data)
+    let resolvedImageUrl: string | undefined; // undefined = keep existing
+
+    if (file) {
+      this.validateImageFile(file);
+      const key = this.buildCategoryS3Key(file.mimetype);
+      resolvedImageUrl = await uploadFileToAWSS3(file, key, true);
+      if (category.imageUrl) {
+        this.cleanupOrphanedImage(category.imageUrl);
+      }
+    } else if (input.imageUrl !== undefined) {
+      resolvedImageUrl = input.imageUrl;
+      if (category.imageUrl && category.imageUrl !== input.imageUrl) {
+        this.cleanupOrphanedImage(category.imageUrl);
+      }
+    }
+
     const raw = await this.prisma.category.update({
       where: { id },
       data: {
         ...(input.name !== undefined && { name: input.name }),
         ...(input.slug !== undefined && { slug: input.slug }),
         ...(input.description !== undefined && { description: input.description }),
-        ...(input.imageUrl !== undefined && { imageUrl: input.imageUrl }),
+        ...(resolvedImageUrl !== undefined && { imageUrl: resolvedImageUrl }),
         ...(input.parentId !== undefined && { parentId: input.parentId }),
         ...(input.isActive !== undefined && { isActive: input.isActive }),
       },
@@ -278,7 +323,7 @@ export class CategoryService {
   }
 
   async remove(id: string): Promise<ApiResponse<null>> {
-    await this.findOrThrow(id);
+    const category = await this.findOrThrow(id);
 
     const hasProducts = await this.prisma.product.findFirst({ where: { categoryId: id } });
     if (hasProducts) {
@@ -304,10 +349,105 @@ export class CategoryService {
 
     await this.prisma.category.delete({ where: { id } });
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/categories'));
+
+    // After hard delete: clean up the image from S3 if nothing else references it
+    if (category.imageUrl) {
+      this.cleanupOrphanedImage(category.imageUrl);
+    }
+
     return { status: true, message: 'Category deleted successfully', data: null };
   }
 
+  // ── Category options ─────────────────────────────────────────────────────────
+
+  async getOptions(categoryId: string): Promise<ApiResponse<CategoryOptionResponseDto[]>> {
+    await this.findOrThrow(categoryId);
+
+    const options = await this.prisma.categoryOption.findMany({
+      where: { categoryId },
+      orderBy: { position: 'asc' },
+    });
+
+    return { status: true, message: 'Category options fetched successfully', data: options };
+  }
+
+  async createOption(
+    categoryId: string,
+    input: CreateCategoryOptionDto,
+  ): Promise<ApiResponse<CategoryOptionResponseDto>> {
+    await this.findOrThrow(categoryId);
+
+    const conflict = await this.prisma.categoryOption.findUnique({
+      where: { categoryId_name: { categoryId, name: input.name } },
+    });
+    if (conflict) throw new ConflictException(`Option "${input.name}" already exists on this category`);
+
+    const option = await this.prisma.categoryOption.create({
+      data: {
+        categoryId,
+        name: input.name,
+        position: input.position ?? 0,
+        isRequired: input.isRequired ?? false,
+      },
+    });
+
+    return { status: true, message: 'Option created successfully', data: option };
+  }
+
+  async updateOption(
+    categoryId: string,
+    optionId: string,
+    input: UpdateCategoryOptionDto,
+  ): Promise<ApiResponse<CategoryOptionResponseDto>> {
+    await this.findOrThrow(categoryId);
+    await this.findOptionOrThrow(categoryId, optionId);
+
+    if (input.name) {
+      const conflict = await this.prisma.categoryOption.findFirst({
+        where: { categoryId, name: input.name, id: { not: optionId } },
+      });
+      if (conflict) throw new ConflictException(`Option "${input.name}" already exists on this category`);
+    }
+
+    const updated = await this.prisma.categoryOption.update({
+      where: { id: optionId },
+      data: {
+        ...(input.name !== undefined && { name: input.name }),
+        ...(input.position !== undefined && { position: input.position }),
+        ...(input.isRequired !== undefined && { isRequired: input.isRequired }),
+      },
+    });
+
+    return { status: true, message: 'Option updated successfully', data: updated };
+  }
+
+  async removeOption(categoryId: string, optionId: string): Promise<ApiResponse<null>> {
+    await this.findOrThrow(categoryId);
+    await this.findOptionOrThrow(categoryId, optionId);
+
+    // Block delete if any ProductOptionValue under this option is used by a variant
+    const inUse = await this.prisma.variantOptionValue.findFirst({
+      where: { productOptionValue: { productOption: { categoryOptionId: optionId } } } as any,
+    });
+    if (inUse) {
+      throw new BadRequestException(
+        'Cannot delete this option — one or more of its product values are in use by variants',
+      );
+    }
+
+    await this.prisma.categoryOption.delete({ where: { id: optionId } });
+    return { status: true, message: 'Option deleted successfully', data: null };
+  }
+
   // ── Private helpers ──────────────────────────────────────────────────────────
+
+  private async findOptionOrThrow(categoryId: string, optionId: string) {
+    const option = await this.prisma.categoryOption.findFirst({
+      where: { id: optionId, categoryId },
+    });
+    if (!option) throw new NotFoundException('Category option not found');
+    return option;
+  }
 
   // walks up the ancestry chain to detect circular references
   private async isDescendantOf(candidateId: string, ancestorId: string): Promise<boolean> {
@@ -327,5 +467,53 @@ export class CategoryService {
     }
 
     return false;
+  }
+
+  // ── Image helpers ────────────────────────────────────────────────────────────
+
+  private validateImageFile(file: Express.Multer.File): void {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowed.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Unsupported file type: ${file.mimetype}. Allowed: jpeg, png, webp, gif`,
+      );
+    }
+  }
+
+  private buildCategoryS3Key(mimetype: string): string {
+    const env = process.env.NODE_ENV === 'production' ? 'production' : 'development';
+    const ext = mimetype.split('/')[1].replace('jpeg', 'jpg');
+    return `${env}/categories/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  }
+
+  private s3KeyFromUrl(url: string): string | null {
+    const pathStyle = url.match(/^https:\/\/s3\.[^.]+\.amazonaws\.com\/[^/]+\/(.+)$/);
+    if (pathStyle) return pathStyle[1];
+    const virtualHosted = url.match(/^https:\/\/[^.]+\.s3(?:\.[^.]+)?\.amazonaws\.com\/(.+)$/);
+    if (virtualHosted) return virtualHosted[1];
+    return null;
+  }
+
+  // Fire-and-forget: delete the S3 object only if no other record still references the URL.
+  // Checks categories, product images, and variant images before deleting.
+  private cleanupOrphanedImage(imageUrl: string): void {
+    setImmediate(async () => {
+      try {
+        const key = this.s3KeyFromUrl(imageUrl);
+        if (!key) return; // not an S3 URL managed by this bucket
+
+        const [categoryRef, productRef, variantRef] = await Promise.all([
+          this.prisma.category.findFirst({ where: { imageUrl } }),
+          this.prisma.productImage.findFirst({ where: { url: imageUrl } }),
+          this.prisma.variantImage.findFirst({ where: { url: imageUrl } }),
+        ]);
+
+        if (categoryRef || productRef || variantRef) return; // still referenced elsewhere
+
+        await deleteFileFromS3(key);
+      } catch (err) {
+        this.logger.warn(`Background S3 cleanup failed for "${imageUrl}": ${(err as Error).message}`);
+      }
+    });
   }
 }

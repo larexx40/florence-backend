@@ -17,6 +17,7 @@ import {
   ApiOperation,
   ApiParam,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
   getSchemaPath,
 } from '@nestjs/swagger';
@@ -46,6 +47,7 @@ import { AdminGuard } from 'src/guards/admin.guards';
 import { StaffGuard } from 'src/guards/staff.guard';
 
 @ApiTags('users')
+@ApiSecurity('x-api-key')
 @ApiBearerAuth()
 @ApiExtraModels(
   UserDto,

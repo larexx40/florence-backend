@@ -16,6 +16,7 @@ import {
   ApiOperation,
   ApiParam,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
 import { AdminGuard } from 'src/guards/admin.guards';
@@ -25,6 +26,7 @@ import { OrderQueryDto } from './dto/order-query.dto';
 import { UpdateOrderStatusDto } from './dto/update-order.dto';
 
 @ApiTags('orders')
+@ApiSecurity('x-api-key')
 @ApiBearerAuth()
 @Controller('orders')
 export class OrderController {

@@ -90,6 +90,14 @@ export class CreateProductDto {
   @IsUUID('4')
   prerequisiteVariantId?: string;
 
+  @ApiPropertyOptional({
+    example: true,
+    description: 'false = no variant selector shown; product is sold as-is with a single default variant',
+  })
+  @IsOptional()
+  @IsBoolean()
+  requiresVariant?: boolean;
+
   @ApiPropertyOptional({ example: 'uuid-of-discount' })
   @IsOptional()
   @IsUUID('4')
@@ -138,6 +146,11 @@ export class UpdateProductDto {
   @IsOptional()
   @IsUUID('4')
   prerequisiteVariantId?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  requiresVariant?: boolean;
 
   @ApiPropertyOptional({ example: 'uuid-of-discount' })
   @IsOptional()
