@@ -8,6 +8,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse, PaginatedData } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
+import { generateVariantSku } from 'src/common/helpers/slug.helper';
 import { AttachImageDto } from 'src/image/dto/image.dto';
 import { BulkCreateVariantsDto, CreateVariantDto, UpdateStockDto, UpdateVariantDto, VariantQueryDto } from './dto/variant.dto';
 
@@ -120,7 +121,7 @@ export class VariantService {
   // ── Mutations ────────────────────────────────────────────────────────────────
 
   async create(productId: string, input: CreateVariantDto): Promise<ApiResponse<any>> {
-    await this.findProductOrThrow(productId);
+    const product = await this.findProductOrThrow(productId);
 
     if (!input.productOptionValueIds.length) {
       throw new BadRequestException('At least one productOptionValueId is required');
@@ -159,8 +160,18 @@ export class VariantService {
       usedOptions.add(catOptionId);
     }
 
-    const skuTaken = await this.prisma.productVariant.findUnique({ where: { sku: input.sku } });
-    if (skuTaken) throw new ConflictException(`SKU "${input.sku}" is already in use`);
+    // Auto-generate denormalized title sorted by categoryOption.name for deterministic output
+    const sortedPovRows = [...povRows].sort((a, b) =>
+      a.productOption.categoryOption.name.localeCompare(b.productOption.categoryOption.name),
+    );
+    const title = sortedPovRows.map((r) => r.value).join(' / ') || 'Default';
+
+    const sku = await generateVariantSku(
+      product.slug,
+      sortedPovRows.map((r) => r.value),
+      (candidate) =>
+        this.prisma.productVariant.findUnique({ where: { sku: candidate } }).then(Boolean),
+    );
 
     // Check combination uniqueness against existing variants
     const existingVariants = await this.prisma.productVariant.findMany({
@@ -178,17 +189,10 @@ export class VariantService {
     });
     if (duplicate) throw new ConflictException('A variant with this combination already exists');
 
-    // Auto-generate denormalized title sorted by categoryOption.name for deterministic output
-    const title =
-      [...povRows]
-        .sort((a, b) => a.productOption.categoryOption.name.localeCompare(b.productOption.categoryOption.name))
-        .map((r) => r.value)
-        .join(' / ') || 'Default';
-
     const variant = await this.prisma.productVariant.create({
       data: {
         productId,
-        sku: input.sku,
+        sku,
         title,
         price: input.price,
         compareAtPrice: input.compareAtPrice ?? null,
@@ -210,26 +214,9 @@ export class VariantService {
   }
 
   async createBulk(productId: string, input: BulkCreateVariantsDto): Promise<ApiResponse<any[]>> {
-    await this.findProductOrThrow(productId);
+    const product = await this.findProductOrThrow(productId);
 
     // ── Pre-transaction validation ──────────────────────────────────────────
-
-    // Reject duplicate SKUs within the request
-    const requestSkus = input.variants.map((v) => v.sku);
-    if (new Set(requestSkus).size !== requestSkus.length) {
-      throw new BadRequestException('Duplicate SKU within the request — each variant must have a unique SKU');
-    }
-
-    // Reject any SKU already in the database
-    const takenSkus = await this.prisma.productVariant.findMany({
-      where: { sku: { in: requestSkus } },
-      select: { sku: true },
-    });
-    if (takenSkus.length > 0) {
-      throw new ConflictException(
-        `SKU(s) already in use: ${takenSkus.map((r) => r.sku).join(', ')}`,
-      );
-    }
 
     // Collect all POV IDs referenced across all variants, validate they belong to this product
     const allPovIds = [...new Set(input.variants.flatMap((v) => v.productOptionValueIds))];
@@ -250,11 +237,14 @@ export class VariantService {
       );
     }
 
-    // Per-variant: validate no duplicate option dimensions + build title
-    const variantMeta: Array<{ title: string; povIds: string[] }> = [];
+    // Per-variant: validate option dimensions, build title, resolve/generate SKU
+    // usedSkus tracks all SKUs assigned so far in this batch to avoid collisions between auto-generated ones
+    const usedSkus = new Set<string>();
+    const variantMeta: Array<{ sku: string; title: string; povIds: string[] }> = [];
+
     for (const variantInput of input.variants) {
       if (!variantInput.productOptionValueIds.length) {
-        throw new BadRequestException(`Variant SKU "${variantInput.sku}": at least one productOptionValueId is required`);
+        throw new BadRequestException('Each variant requires at least one productOptionValueId');
       }
 
       const usedOptions = new Set<string>();
@@ -263,20 +253,30 @@ export class VariantService {
         const catOptionId = row.productOption.categoryOptionId;
         if (usedOptions.has(catOptionId)) {
           throw new BadRequestException(
-            `Variant SKU "${variantInput.sku}": two values from the same option (${row.productOption.categoryOption.name})`,
+            `Variant has two values from the same option (${row.productOption.categoryOption.name})`,
           );
         }
         usedOptions.add(catOptionId);
       }
 
-      const title =
-        variantInput.productOptionValueIds
-          .map((id) => povMap.get(id)!)
-          .sort((a, b) => a.productOption.categoryOption.name.localeCompare(b.productOption.categoryOption.name))
-          .map((r) => r.value)
-          .join(' / ') || 'Default';
+      const sortedRows = variantInput.productOptionValueIds
+        .map((id) => povMap.get(id)!)
+        .sort((a, b) => a.productOption.categoryOption.name.localeCompare(b.productOption.categoryOption.name));
 
-      variantMeta.push({ title, povIds: variantInput.productOptionValueIds });
+      const title = sortedRows.map((r) => r.value).join(' / ') || 'Default';
+
+      // auto-generate SKU, skipping any already claimed in this batch
+      const sku = await generateVariantSku(
+        product.slug,
+        sortedRows.map((r) => r.value),
+        (candidate) => {
+          if (usedSkus.has(candidate)) return Promise.resolve(true);
+          return this.prisma.productVariant.findUnique({ where: { sku: candidate } }).then(Boolean);
+        },
+      );
+
+      usedSkus.add(sku);
+      variantMeta.push({ sku, title, povIds: variantInput.productOptionValueIds });
     }
 
     // Check for duplicate option combinations within the request
@@ -285,7 +285,7 @@ export class VariantService {
       const key = [...variantMeta[i].povIds].sort().join(',');
       if (seenCombos.has(key)) {
         throw new BadRequestException(
-          `Variant SKU "${input.variants[i].sku}": duplicate option combination in the same request`,
+          `Variant "${variantMeta[i].sku}": duplicate option combination in the same request`,
         );
       }
       seenCombos.add(key);
@@ -307,7 +307,7 @@ export class VariantService {
       });
       if (dupe) {
         throw new ConflictException(
-          `Variant SKU "${input.variants[i].sku}": option combination already exists on this product`,
+          `Variant "${variantMeta[i].sku}": option combination already exists on this product`,
         );
       }
     }
@@ -319,12 +319,12 @@ export class VariantService {
 
       for (let i = 0; i < input.variants.length; i += 1) {
         const v = input.variants[i];
-        const { title, povIds } = variantMeta[i];
+        const { sku, title, povIds } = variantMeta[i];
 
         const variant = await tx.productVariant.create({
           data: {
             productId,
-            sku: v.sku,
+            sku,
             title,
             price: v.price,
             compareAtPrice: v.compareAtPrice ?? null,
@@ -356,17 +356,9 @@ export class VariantService {
   ): Promise<ApiResponse<any>> {
     await this.findVariantOrThrow(productId, variantId);
 
-    if (input.sku) {
-      const skuTaken = await this.prisma.productVariant.findFirst({
-        where: { sku: input.sku, id: { not: variantId } },
-      });
-      if (skuTaken) throw new ConflictException(`SKU "${input.sku}" is already in use`);
-    }
-
     const updated = await this.prisma.productVariant.update({
       where: { id: variantId },
       data: {
-        ...(input.sku !== undefined && { sku: input.sku }),
         ...(input.price !== undefined && { price: input.price }),
         ...(input.compareAtPrice !== undefined && { compareAtPrice: input.compareAtPrice }),
         ...(input.isActive !== undefined && { isActive: input.isActive }),

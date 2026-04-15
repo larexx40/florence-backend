@@ -9,7 +9,6 @@ import {
   IsNumber,
   IsNumberString,
   IsOptional,
-  IsString,
   IsUUID,
   Min,
   ValidateNested,
@@ -57,10 +56,6 @@ export class VariantQueryDto {
 }
 
 export class CreateVariantDto {
-  @ApiProperty({ example: 'BFLO-226-BLACK' })
-  @IsNotEmpty({ message: 'SKU is required' })
-  @IsString()
-  sku: string;
 
   @ApiProperty({ example: 14000 })
   @IsNotEmpty({ message: 'Price is required' })
@@ -105,11 +100,6 @@ export class CreateVariantDto {
 }
 
 export class UpdateVariantDto {
-  @ApiPropertyOptional({ example: 'BFLO-226-BLACK-V2' })
-  @IsOptional()
-  @IsString()
-  sku?: string;
-
   @ApiPropertyOptional({ example: 15000 })
   @IsOptional()
   @IsNumber()
