@@ -36,29 +36,48 @@ const VARIANT_ORDER_INCLUDE = {
   },
 } satisfies Prisma.ProductVariantInclude;
 
-// ── Discount calculator ───────────────────────────────────────────────────────
+// Product fields needed for direct-discount resolution (scalar fields included automatically)
+type ProductWithDiscounts = {
+  discount: (Discount & { tiers: DiscountTier[] }) | null;
+  directDiscountEnabled: boolean;
+  directDiscountType: 'PERCENTAGE' | 'AMOUNT' | null;
+  directDiscountValue: { toNumber(): number } | null;
+};
 
-type DiscountWithTiers = Discount & { tiers: DiscountTier[] };
+// ── Discount calculator ───────────────────────────────────────────────────────
 
 function calcLineDiscount(
   unitPrice: Decimal,
   quantity: number,
-  discount: DiscountWithTiers | null,
+  product: ProductWithDiscounts,
 ): Decimal {
+  const lineTotal = unitPrice.mul(quantity);
+
+  // Direct discount overrides campaign discount when enabled
+  if (product.directDiscountEnabled && product.directDiscountType && product.directDiscountValue) {
+    const value = new Decimal(product.directDiscountValue.toNumber());
+    if (product.directDiscountType === 'PERCENTAGE') {
+      return lineTotal.mul(value).div(100).toDecimalPlaces(2);
+    }
+    if (product.directDiscountType === 'AMOUNT') {
+      // per-unit amount deduction, capped so line total can't go negative
+      return Decimal.min(value.mul(quantity), lineTotal).toDecimalPlaces(2);
+    }
+  }
+
+  const discount = product.discount;
   if (!discount || !discount.isActive) return new Decimal(0);
 
   const now = new Date();
   if (discount.startsAt && now < discount.startsAt) return new Decimal(0);
   if (discount.endsAt && now > discount.endsAt) return new Decimal(0);
 
-  const lineTotal = unitPrice.mul(quantity);
-
   if (discount.type === 'FLAT_PERCENT' && discount.value) {
     return lineTotal.mul(discount.value).div(100).toDecimalPlaces(2);
   }
   if (discount.type === 'FLAT_AMOUNT' && discount.value) {
     // flat amount off the line total, capped so it can't go negative
-    return Decimal.min(discount.value, lineTotal);
+    return Decimal.min(discount.value, lineTotal).toDecimalPlaces(2);
   }
   if (discount.type === 'TIERED_QUANTITY') {
     const tier = discount.tiers.find(
@@ -286,7 +305,7 @@ export class CheckoutService {
     const lineItems: LineItem[] = dto.items.map((item) => {
       const variant = variants.find((v) => v.id === item.variantId)!;
       const unitPrice = variant.price;
-      const discountAmount = calcLineDiscount(unitPrice, item.quantity, variant.product.discount as DiscountWithTiers | null);
+      const discountAmount = calcLineDiscount(unitPrice, item.quantity, variant.product as ProductWithDiscounts);
       const lineTotal = unitPrice.mul(item.quantity).sub(discountAmount);
 
       return {
@@ -358,7 +377,13 @@ export class CheckoutService {
       });
     });
 
-    // ── 6. Paystack: initialize payment (outside transaction) ─────────────────
+    // ── 6. Clear the user's cart ─────────────────────────────────────────────────
+
+    await this.prisma.cartItem.deleteMany({
+      where: { cart: { userId: user.id } },
+    });
+
+    // ── 7. Paystack: initialize payment (outside transaction) ─────────────────
 
     let paystackUrl: string | null = null;
     let accessCode: string | null = null;
@@ -407,7 +432,7 @@ export class CheckoutService {
       }
     }
 
-    // ── 7. Confirmation email ─────────────────────────────────────────────────
+    // ── 8. Confirmation email ─────────────────────────────────────────────────
 
     this.mailService.sendMail({
       to: email,

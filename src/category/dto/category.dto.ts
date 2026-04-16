@@ -236,6 +236,59 @@ export class CategoryListResponseDto {
   };
 }
 
+export class CategoryWithOptionsResponseDto {
+  @ApiProperty({ example: 'uuid' })
+  id: string;
+
+  @ApiProperty({ example: 'Shoes' })
+  name: string;
+
+  @ApiProperty({ example: 'shoes' })
+  slug: string;
+
+  @ApiPropertyOptional({ example: 'All shoe categories', nullable: true })
+  description: string | null;
+
+  @ApiPropertyOptional({ example: 'https://cdn.example.com/shoes.jpg', nullable: true })
+  imageUrl: string | null;
+
+  @ApiPropertyOptional({ example: 'uuid-of-parent', nullable: true })
+  parentId: string | null;
+
+  @ApiProperty({ example: true })
+  isActive: boolean;
+
+  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  createdAt: Date;
+
+  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  updatedAt: Date;
+
+  @ApiProperty({ type: () => [SubcategoryResponseDto] })
+  subcategories: SubcategoryResponseDto[];
+
+  @ApiProperty({ example: { products: 12 } })
+  _count: { products: number };
+
+  @ApiProperty({ type: () => [CategoryOptionResponseDto] })
+  categoryOptions: CategoryOptionResponseDto[];
+}
+
+export class CategoryWithOptionsListResponseDto {
+  @ApiProperty({ type: () => [CategoryWithOptionsResponseDto] })
+  categories: CategoryWithOptionsResponseDto[];
+
+  @ApiProperty({
+    example: { totalData: 100, totalPages: 5, currentPage: 1, perPage: 20 },
+  })
+  pagination: {
+    totalData: number;
+    totalPages: number;
+    currentPage: number;
+    perPage: number;
+  };
+}
+
 // Standalone — does NOT extend CategoryResponseDto to avoid Swagger circular ref
 export class CategoryTreeResponseDto {
   @ApiProperty({ example: 'uuid' })

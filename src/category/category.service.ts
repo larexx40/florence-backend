@@ -11,16 +11,20 @@ import { ApiResponse } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
 import { generateUniqueSlug } from 'src/common/helpers/slug.helper';
+import { uploadFileToAWSS3 } from 'src/common/helpers/s3.upload.helper';
 import {
-  deleteFileFromS3,
-  uploadFileToAWSS3,
-} from 'src/common/helpers/s3.upload.helper';
+  buildS3ImageKey,
+  cleanupOrphanedS3Image,
+  validateImageFile,
+} from 'src/common/helpers/image.helper';
 import {
   CategoryListResponseDto,
   CategoryOptionResponseDto,
   CategoryQueryDto,
   CategoryResponseDto,
   CategoryTreeResponseDto,
+  CategoryWithOptionsListResponseDto,
+  CategoryWithOptionsResponseDto,
   CreateCategoryDto,
   CreateCategoryOptionDto,
   UpdateCategoryDto,
@@ -202,6 +206,97 @@ export class CategoryService {
     };
   }
 
+  // ── Admin queries ────────────────────────────────────────────────────────────
+
+  async getAllWithOptions(
+    query: CategoryQueryDto,
+  ): Promise<ApiResponse<CategoryWithOptionsListResponseDto>> {
+    const page = Math.max(1, parseInt(query.page ?? '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(query.limit ?? '20', 10)));
+    const sortBy = query.sortBy ?? 'name';
+    const sortOrder = query.sortOrder ?? 'asc';
+
+    const where: Prisma.CategoryWhereInput = {
+      ...(!query.includeInactive && { isActive: true }),
+      ...(query.rootOnly && { parentId: null }),
+      ...(query.parentId && { parentId: query.parentId }),
+      ...(query.search && {
+        OR: [
+          { name: { contains: query.search, mode: 'insensitive' } },
+          { description: { contains: query.search, mode: 'insensitive' } },
+        ],
+      }),
+    };
+
+    const include = {
+      ...CATEGORY_INCLUDE,
+      categoryOptions: { orderBy: { name: 'asc' as const } },
+    };
+
+    const orderBy = { [sortBy]: sortOrder };
+
+    if (query.all) {
+      const rows = await this.prisma.category.findMany({ where, include, orderBy });
+      const total = rows.length;
+      return {
+        status: true,
+        message: 'Categories fetched successfully',
+        data: {
+          categories: rows.map(toResponse) as any,
+          pagination: { totalData: total, totalPages: 1, currentPage: 1, perPage: total },
+        },
+      };
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.category.findMany({
+        where,
+        include,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.category.count({ where }),
+    ]);
+
+    return {
+      status: true,
+      message: 'Categories fetched successfully',
+      data: {
+        categories: rows.map(toResponse) as any,
+        pagination: {
+          totalData: total,
+          totalPages: Math.ceil(total / limit),
+          currentPage: page,
+          perPage: limit,
+        },
+      },
+    };
+  }
+
+  async getById(id: string): Promise<ApiResponse<CategoryWithOptionsResponseDto>> {
+    const raw = await this.prisma.category.findUnique({
+      where: { id },
+      include: {
+        parent: { select: { id: true, name: true, slug: true } },
+        children: {
+          orderBy: { name: 'asc' },
+          select: SUBCATEGORY_SELECT,
+        },
+        _count: { select: { products: true } },
+        categoryOptions: { orderBy: { name: 'asc' } },
+      },
+    });
+
+    if (!raw) throw new NotFoundException('Category not found');
+
+    return {
+      status: true,
+      message: 'Category fetched successfully',
+      data: toResponse(raw) as any,
+    };
+  }
+
   // ── Admin mutations ──────────────────────────────────────────────────────────
 
   async create(
@@ -220,8 +315,8 @@ export class CategoryService {
     let imageUrl: string | null = input.imageUrl ?? null;
 
     if (file) {
-      this.validateImageFile(file);
-      const key = this.buildCategoryS3Key(file.mimetype);
+      validateImageFile(file);
+      const key = buildS3ImageKey('categories', file.mimetype);
       imageUrl = await uploadFileToAWSS3(file, key, true, false);
     }
 
@@ -288,16 +383,16 @@ export class CategoryService {
     let resolvedImageUrl: string | undefined; // undefined = keep existing
 
     if (file) {
-      this.validateImageFile(file);
-      const key = this.buildCategoryS3Key(file.mimetype);
-      resolvedImageUrl = await uploadFileToAWSS3(file, key, true);
+      validateImageFile(file);
+      const key = buildS3ImageKey('categories', file.mimetype);
+      resolvedImageUrl = await uploadFileToAWSS3(file, key, true, false);
       if (category.imageUrl) {
-        this.cleanupOrphanedImage(category.imageUrl);
+        cleanupOrphanedS3Image(category.imageUrl, this.prisma, this.logger);
       }
     } else if (input.imageUrl !== undefined) {
       resolvedImageUrl = input.imageUrl;
       if (category.imageUrl && category.imageUrl !== input.imageUrl) {
-        this.cleanupOrphanedImage(category.imageUrl);
+        cleanupOrphanedS3Image(category.imageUrl, this.prisma, this.logger);
       }
     }
 
@@ -352,7 +447,7 @@ export class CategoryService {
 
     // After hard delete: clean up the image from S3 if nothing else references it
     if (category.imageUrl) {
-      this.cleanupOrphanedImage(category.imageUrl);
+      cleanupOrphanedS3Image(category.imageUrl, this.prisma, this.logger);
     }
 
     return { status: true, message: 'Category deleted successfully', data: null };
@@ -467,51 +562,4 @@ export class CategoryService {
     return false;
   }
 
-  // ── Image helpers ────────────────────────────────────────────────────────────
-
-  private validateImageFile(file: Express.Multer.File): void {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-    if (!allowed.includes(file.mimetype)) {
-      throw new BadRequestException(
-        `Unsupported file type: ${file.mimetype}. Allowed: jpeg, png, webp, gif`,
-      );
-    }
-  }
-
-  private buildCategoryS3Key(mimetype: string): string {
-    const env = process.env.NODE_ENV === 'production' ? 'production' : 'development';
-    const ext = mimetype.split('/')[1].replace('jpeg', 'jpg');
-    return `${env}/categories/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-  }
-
-  private s3KeyFromUrl(url: string): string | null {
-    const pathStyle = url.match(/^https:\/\/s3\.[^.]+\.amazonaws\.com\/[^/]+\/(.+)$/);
-    if (pathStyle) return pathStyle[1];
-    const virtualHosted = url.match(/^https:\/\/[^.]+\.s3(?:\.[^.]+)?\.amazonaws\.com\/(.+)$/);
-    if (virtualHosted) return virtualHosted[1];
-    return null;
-  }
-
-  // Fire-and-forget: delete the S3 object only if no other record still references the URL.
-  // Checks categories, product images, and variant images before deleting.
-  private cleanupOrphanedImage(imageUrl: string): void {
-    setImmediate(async () => {
-      try {
-        const key = this.s3KeyFromUrl(imageUrl);
-        if (!key) return; // not an S3 URL managed by this bucket
-
-        const [categoryRef, productRef, variantRef] = await Promise.all([
-          this.prisma.category.findFirst({ where: { imageUrl } }),
-          this.prisma.productImage.findFirst({ where: { url: imageUrl } }),
-          this.prisma.variantImage.findFirst({ where: { url: imageUrl } }),
-        ]);
-
-        if (categoryRef || productRef || variantRef) return; // still referenced elsewhere
-
-        await deleteFileFromS3(key);
-      } catch (err) {
-        this.logger.warn(`Background S3 cleanup failed for "${imageUrl}": ${(err as Error).message}`);
-      }
-    });
-  }
 }

@@ -1,14 +1,31 @@
 import { WebClient } from '@slack/web-api';
 import { SlackChannel } from '../constants/enum';
+import { Logger } from '@nestjs/common';
+import { config } from 'dotenv';
+
+config();
+
+const logger = new Logger('SlackHelper');
 
 // const options = {};
 // const web = new WebClient(process.env.SLACK_TOKEN, options);
 const slackToken = process.env.SLACK_BOT_TOKEN;
-const defaultChannel = SlackChannel.DEFAULT
+const defaultChannel = SlackChannel.DEFAULT;
 
 const client = new WebClient(slackToken);
 
-export const sendSlackMessage = async (message: string, channel = null) => {
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+};
+
+export const sendSlackMessage = async (
+  message: string,
+  channel?: string | null
+) => {
   const channelId = channel || SlackChannel.DEFAULT;
   try {
     const resp = await client.chat.postMessage({
@@ -26,9 +43,14 @@ export const sendSlackMessage = async (message: string, channel = null) => {
     });
 
     return resp.ok;
-  } catch (error) {
-    console.log('SEND_SLACK_MESSAGE', { error });
-    return error;
+  } catch (error: unknown) {
+    logger.error(
+      `SEND_SLACK_MESSAGE failed for channel ${channelId}: ${getErrorMessage(
+        error
+      )}`,
+      error instanceof Error ? error.stack : undefined
+    );
+    return false;
   }
 };
 
@@ -39,14 +61,14 @@ export const sendSlackAlert = async (
   title = 'Backend Alert'
 ) => {
   if (!slackToken) {
-    console.log('❌ Missing SLACK_BOT_TOKEN');
+    logger.error('Missing SLACK_BOT_TOKEN');
     return false;
   }
 
   const target = channelOrUserId || defaultChannel;
 
   if (!target) {
-    console.log('❌ Missing default Slack channel and no override provided');
+    logger.error('Missing default Slack channel and no override provided');
     return false;
   }
 
@@ -66,8 +88,11 @@ export const sendSlackAlert = async (
     });
 
     return response.ok;
-  } catch (error) {
-    console.log('SEND_SLACK_ALERT_ERROR:', error?.data || error);
+  } catch (error: unknown) {
+    logger.error(
+      `SEND_SLACK_ALERT_ERROR for target ${target}: ${getErrorMessage(error)}`,
+      error instanceof Error ? error.stack : undefined
+    );
     return false;
   }
 };

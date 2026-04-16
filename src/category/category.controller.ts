@@ -35,6 +35,8 @@ import {
   CategoryQueryDto,
   CategoryResponseDto,
   CategoryTreeResponseDto,
+  CategoryWithOptionsListResponseDto,
+  CategoryWithOptionsResponseDto,
   CreateCategoryDto,
   CreateCategoryOptionDto,
   SubcategoryResponseDto,
@@ -50,6 +52,8 @@ import {
   CategoryListResponseDto,
   CategoryTreeResponseDto,
   CategoryOptionResponseDto,
+  CategoryWithOptionsResponseDto,
+  CategoryWithOptionsListResponseDto,
 )
 @Controller('categories')
 export class CategoryController {
@@ -94,6 +98,48 @@ export class CategoryController {
   })
   getTree() {
     return this.categoryService.getTree();
+  }
+
+  @Get('admin')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List all categories with their option types (admin only)' })
+  @ApiOkResponse({
+    description: 'Categories with options returned',
+    schema: {
+      properties: {
+        status: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Categories fetched successfully' },
+        data: { $ref: getSchemaPath(CategoryWithOptionsListResponseDto) },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  getAllWithOptions(@Query() query: CategoryQueryDto) {
+    return this.categoryService.getAllWithOptions(query);
+  }
+
+  @Get(':id')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get a category by UUID with all its option types (admin only)' })
+  @ApiParam({ name: 'id', description: 'Category UUID' })
+  @ApiOkResponse({
+    description: 'Category with options returned',
+    schema: {
+      properties: {
+        status: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Category fetched successfully' },
+        data: { $ref: getSchemaPath(CategoryWithOptionsResponseDto) },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Category not found' })
+  getById(@Param('id') id: string) {
+    return this.categoryService.getById(id);
   }
 
   @Get(':slug')

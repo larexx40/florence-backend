@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse, PaginatedData } from 'src/common/types';
 import { buildReceiptHtml, ReceiptOrder } from './receipt.template';
@@ -41,8 +41,16 @@ export class OrderService {
       ...(query.status && { status: query.status }),
       ...(query.paymentStatus && { paymentStatus: query.paymentStatus }),
       ...(query.paymentMethod && { paymentMethod: query.paymentMethod }),
+      ...(query.userId && { userId: query.userId }),
       ...(query.search && {
-        orderNumber: { contains: query.search, mode: 'insensitive' },
+        OR: [
+          { orderNumber: { contains: query.search, mode: 'insensitive' } },
+          { user: { email: { contains: query.search, mode: 'insensitive' } } },
+          { user: { firstName: { contains: query.search, mode: 'insensitive' } } },
+          { user: { lastName: { contains: query.search, mode: 'insensitive' } } },
+          { user: { businessName: { contains: query.search, mode: 'insensitive' } } },
+          { user: { phone: { contains: query.search, mode: 'insensitive' } } },
+        ],
       }),
     };
 
@@ -99,6 +107,35 @@ export class OrderService {
     });
 
     return { status: true, message: 'Order updated successfully', data: updated };
+  }
+
+  // ── Mark bank-transfer / cash order as paid (admin) ─────────────────────────
+
+  async markPaid(id: string): Promise<ApiResponse<OrderDetail>> {
+    const order = await this.prisma.order.findUnique({ where: { id } });
+    if (!order) throw new NotFoundException('Order not found');
+
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      throw new BadRequestException('Order is already marked as paid');
+    }
+
+    if (order.paymentMethod === PaymentMethod.PAYSTACK) {
+      throw new BadRequestException(
+        'Paystack orders are confirmed automatically via webhook — do not mark them paid manually',
+      );
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id },
+      data: {
+        paymentStatus: PaymentStatus.PAID,
+        // advance from PENDING → CONFIRMED once payment is confirmed
+        ...(order.status === 'PENDING' && { status: 'CONFIRMED' }),
+      },
+      include: ORDER_DETAIL_INCLUDE,
+    });
+
+    return { status: true, message: 'Order marked as paid', data: updated };
   }
 
   // ── Thermal receipt ───────────────────────────────────────────────────────────

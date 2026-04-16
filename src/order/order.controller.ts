@@ -69,6 +69,22 @@ export class OrderController {
     return this.orderService.updateStatus(id, dto);
   }
 
+  @Patch(':id/mark-paid')
+  @UseGuards(AdminGuard)
+  @ApiOperation({
+    summary: 'Mark a bank-transfer or cash-on-delivery order as paid (admin)',
+    description: 'Only valid for BANK_TRANSFER and CASH_ON_DELIVERY orders. Also advances status from PENDING → CONFIRMED.',
+  })
+  @ApiParam({ name: 'id', description: 'Order UUID' })
+  @ApiResponse({ status: 200, description: 'Order marked as paid' })
+  @ApiResponse({ status: 400, description: 'Already paid, or order is a Paystack order' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Order not found' })
+  markPaid(@Param('id', ParseUUIDPipe) id: string) {
+    return this.orderService.markPaid(id);
+  }
+
   @Get(':id/receipt')
   @UseGuards(StaffGuard)
   @Header('Content-Type', 'text/html; charset=utf-8')
