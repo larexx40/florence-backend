@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -23,9 +24,11 @@ import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
 import { Cacheable } from 'src/cache/cache.decorator';
 import { CacheInterceptor } from 'src/cache/cache.interceptor';
+import { UploadFiles } from 'src/common/helpers/file-upload.helper';
 import { AttachImageDto } from 'src/image/dto/image.dto';
 import { ProductService } from './product.service';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
+import { ProductDetailResponseDto, ProductListResponseDto } from './dto/product-response.dto';
 
 @ApiTags('products')
 @ApiSecurity('x-api-key')
@@ -39,20 +42,20 @@ export class ProductController {
   @UseInterceptors(CacheInterceptor)
   @Cacheable(900)
   @ApiOperation({ summary: 'List all active products with search, sort, filter, and pagination' })
-  @ApiResponse({ status: 200, description: 'Products returned' })
+  @ApiResponse({ status: 200, description: 'Products returned', type: ProductListResponseDto, isArray: true })
   getAll(@Query() query: ProductQueryDto) {
     return this.productService.getAll(query);
   }
 
-  @Get(':slug')
+  @Get(':idOrSlug')
   @UseInterceptors(CacheInterceptor)
   @Cacheable(600)
-  @ApiOperation({ summary: 'Get full product detail by slug including options and variants' })
-  @ApiParam({ name: 'slug', example: 'bflo-226' })
-  @ApiResponse({ status: 200, description: 'Product returned' })
+  @ApiOperation({ summary: 'Get full product detail by UUID or slug' })
+  @ApiParam({ name: 'idOrSlug', description: 'Product UUID or slug', example: 'classic-trouser' })
+  @ApiResponse({ status: 200, description: 'Product returned', type: ProductDetailResponseDto })
   @ApiResponse({ status: 404, description: 'Product not found' })
-  getBySlug(@Param('slug') slug: string) {
-    return this.productService.getBySlug(slug);
+  getOne(@Param('idOrSlug') idOrSlug: string) {
+    return this.productService.getOne(idOrSlug);
   }
 
   // ── Admin ────────────────────────────────────────────────────────────────────
@@ -60,6 +63,7 @@ export class ProductController {
   @Post()
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
+  @UploadFiles('images', 5)
   @ApiOperation({ summary: 'Create a new product (admin only)' })
   @ApiResponse({ status: 201, description: 'Product created' })
   @ApiResponse({ status: 400, description: 'Invalid input' })
@@ -67,23 +71,31 @@ export class ProductController {
   @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
   @ApiResponse({ status: 404, description: 'Category or discount not found' })
   @ApiResponse({ status: 409, description: 'Slug already in use' })
-  create(@Body() input: CreateProductDto) {
-    return this.productService.create(input);
+  create(
+    @Body() input: CreateProductDto,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    return this.productService.create(input, files);
   }
 
   @Patch(':id')
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update a product (admin only)' })
+  @UploadFiles('images', 5)
+  @ApiOperation({ summary: 'Update a product (admin only). Attach up to 5 images total across all uploads.' })
   @ApiParam({ name: 'id', description: 'Product UUID' })
   @ApiResponse({ status: 200, description: 'Product updated' })
-  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiResponse({ status: 400, description: 'Invalid input or image limit exceeded' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
   @ApiResponse({ status: 404, description: 'Product not found' })
   @ApiResponse({ status: 409, description: 'Slug already in use' })
-  update(@Param('id') id: string, @Body() input: UpdateProductDto) {
-    return this.productService.update(id, input);
+  update(
+    @Param('id') id: string,
+    @Body() input: UpdateProductDto,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    return this.productService.update(id, input, files);
   }
 
   @Delete(':id')
@@ -100,6 +112,27 @@ export class ProductController {
   }
 
   // ── Image management ─────────────────────────────────────────────────────────
+
+  @Post(':id/images/upload')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @UploadFiles('images', 5)
+  @ApiOperation({ summary: 'Upload up to 5 watermarked product images directly (admin only)' })
+  @ApiParam({ name: 'id', description: 'Product UUID' })
+  @ApiResponse({
+    status: 201,
+    description: 'Images uploaded and attached to the product. Each image is optimised and watermarked before storage.',
+  })
+  @ApiResponse({ status: 400, description: 'No files provided, invalid type, or would exceed 5-image limit' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Product not found' })
+  uploadProductImages(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    return this.productService.uploadProductImages(id, files);
+  }
 
   @Post(':id/images')
   @UseGuards(AuthGuard, AdminGuard)
@@ -120,17 +153,17 @@ export class ProductController {
   @Delete(':id/images/:imageId')
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Detach an image from a product (admin only)' })
+  @ApiOperation({ summary: 'Permanently delete a product image from DB and S3 (admin only)' })
   @ApiParam({ name: 'id', description: 'Product UUID' })
-  @ApiParam({ name: 'imageId', description: 'Image UUID' })
-  @ApiResponse({ status: 200, description: 'Image detached' })
+  @ApiParam({ name: 'imageId', description: 'ProductImage UUID' })
+  @ApiResponse({ status: 200, description: 'Image deleted from DB and S3' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
-  @ApiResponse({ status: 404, description: 'Product or image link not found' })
-  detachImage(
+  @ApiResponse({ status: 404, description: 'Image not found on this product' })
+  deleteProductImage(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('imageId', ParseUUIDPipe) imageId: string,
   ) {
-    return this.productService.detachImage(id, imageId);
+    return this.productService.deleteProductImage(id, imageId);
   }
 }

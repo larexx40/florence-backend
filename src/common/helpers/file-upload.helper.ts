@@ -1,5 +1,5 @@
 import { ParseFilePipeBuilder, UseInterceptors, applyDecorators } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ApiConsumes } from '@nestjs/swagger';
 import * as multer from 'multer';
 
@@ -46,6 +46,27 @@ export function UploadFile(fieldName: string, opts: UploadOptions = IMAGE_UPLOAD
   return applyDecorators(
     UseInterceptors(
       FileInterceptor(fieldName, {
+        storage: multer.memoryStorage(),
+        limits: { fileSize: opts.maxBytes },
+      }),
+    ),
+    ApiConsumes('multipart/form-data'),
+  );
+}
+
+// ── Multi-file method-level decorator ────────────────────────────────────────
+//
+// Wires up FilesInterceptor with memory storage and marks the endpoint as
+// multipart/form-data. Use with @UploadedFiles() in the controller.
+//
+// Usage:
+//   @UploadFiles('images', 5)                       // up to 5 images
+//   @UploadFiles('files', 3, DOCUMENT_UPLOAD)        // up to 3 documents
+
+export function UploadFiles(fieldName: string, maxCount: number, opts: UploadOptions = IMAGE_UPLOAD) {
+  return applyDecorators(
+    UseInterceptors(
+      FilesInterceptor(fieldName, maxCount, {
         storage: multer.memoryStorage(),
         limits: { fileSize: opts.maxBytes },
       }),

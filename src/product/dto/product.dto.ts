@@ -130,11 +130,6 @@ export class UpdateProductDto {
   @IsString()
   name?: string;
 
-  @ApiPropertyOptional({ example: 'bflo-226-updated' })
-  @IsOptional()
-  @IsString()
-  slug?: string;
-
   @ApiPropertyOptional({ example: 'Updated description' })
   @IsOptional()
   @IsString()

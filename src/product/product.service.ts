@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -9,8 +11,68 @@ import { ApiResponse, PaginatedData } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
 import { generateUniqueSlug } from 'src/common/helpers/slug.helper';
+import { buildS3ImageKey, cleanupOrphanedS3Image, validateImageFile } from 'src/common/helpers/image.helper';
+import { uploadFileToAWSS3 } from 'src/common/helpers/s3.upload.helper';
 import { AttachImageDto } from 'src/image/dto/image.dto';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toProductDetailResponse(product: any) {
+  const options = product.productOptions.map((opt: any) => ({
+    id: opt.id,
+    name: opt.categoryOption.name,
+    values: opt.values.map((v: any) => ({
+      id: v.id,
+      value: v.value,
+      colorHex: v.colorHex ?? null,
+    })),
+  }));
+
+  const prices = product.variants.map((v: any) => Number(v.price));
+
+  const variants = product.variants.map((v: any) => ({
+    id: v.id,
+    sku: v.sku,
+    title: v.title,
+    price: Number(v.price),
+    compareAtPrice: v.compareAtPrice != null ? Number(v.compareAtPrice) : null,
+    stockQty: v.stockQty,
+    isActive: v.isActive,
+    minQty: v.minQty ?? null,
+    maxQty: v.maxQty ?? null,
+    weightKg: v.weightKg != null ? Number(v.weightKg) : null,
+    createdAt: v.createdAt,
+    updatedAt: v.updatedAt,
+    combination: v.variantOptionValues.map((vov: any) => ({
+      optionName: vov.productOptionValue.productOption.categoryOption.name,
+      value: vov.productOptionValue.value,
+      colorHex: vov.productOptionValue.colorHex ?? null,
+    })),
+    images: v.images,
+  }));
+
+  const { productOptions, variants: _raw, ...rest } = product;
+  void productOptions;
+
+  return {
+    ...rest,
+    options,
+    variants,
+    minPrice: prices.length ? Math.min(...prices) : null,
+    maxPrice: prices.length ? Math.max(...prices) : null,
+  };
+}
+
+function withPriceRange<T extends { variants: { price: { toNumber(): number } | number }[] }>(product: T) {
+  const prices = product.variants.map((v) => Number(v.price));
+  return {
+    ...product,
+    minPrice: prices.length ? Math.min(...prices) : null,
+    maxPrice: prices.length ? Math.max(...prices) : null,
+  };
+}
 
 // ── Shared include shapes ────────────────────────────────────────────────────
 
@@ -28,26 +90,59 @@ const PRODUCT_LIST_INCLUDE = {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const PRODUCT_DETAIL_INCLUDE: any = {
-  category: true,
+  category: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      description: true,
+      imageUrl: true,
+      parentId: true,
+      isActive: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
   images: {
+    select: { id: true, url: true, altText: true, position: true, createdAt: true },
     orderBy: { position: 'asc' as const },
   },
   productOptions: {
     orderBy: { createdAt: 'asc' as const },
-    include: {
+    select: {
+      id: true,
       categoryOption: { select: { id: true, name: true } },
-      values: { orderBy: { createdAt: 'asc' as const } },
+      values: {
+        orderBy: { createdAt: 'asc' as const },
+        select: { id: true, value: true, colorHex: true },
+      },
     },
   },
   variants: {
     where: { isActive: true },
-    include: {
+    select: {
+      id: true,
+      sku: true,
+      title: true,
+      price: true,
+      compareAtPrice: true,
+      stockQty: true,
+      isActive: true,
+      minQty: true,
+      maxQty: true,
+      weightKg: true,
+      createdAt: true,
+      updatedAt: true,
       variantOptionValues: {
-        include: {
+        select: {
           productOptionValue: {
-            include: {
+            select: {
+              value: true,
+              colorHex: true,
               productOption: {
-                include: { categoryOption: { select: { id: true, name: true } } },
+                select: {
+                  categoryOption: { select: { name: true } },
+                },
               },
             },
           },
@@ -55,14 +150,18 @@ const PRODUCT_DETAIL_INCLUDE: any = {
       },
       images: {
         orderBy: { position: 'asc' as const },
+        select: { id: true, url: true, altText: true, position: true, createdAt: true },
       },
     },
   },
-// satisfies constraint removed — re-add after `npx prisma migrate dev && npx prisma generate`
-} as const;
+};
+
+const MAX_PRODUCT_IMAGES = 5;
 
 @Injectable()
 export class ProductService {
+  private readonly logger = new Logger(ProductService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
@@ -92,11 +191,12 @@ export class ProductService {
     const orderBy = { [sortBy]: sortOrder };
 
     if (query.all) {
-      const products = await this.prisma.product.findMany({
+      const raw = await this.prisma.product.findMany({
         where,
         include: PRODUCT_LIST_INCLUDE,
         orderBy,
       });
+      const products = raw.map(withPriceRange);
       const total = products.length;
       return {
         status: true,
@@ -108,7 +208,7 @@ export class ProductService {
       };
     }
 
-    const [products, total] = await Promise.all([
+    const [raw, total] = await Promise.all([
       this.prisma.product.findMany({
         where,
         include: PRODUCT_LIST_INCLUDE,
@@ -118,6 +218,7 @@ export class ProductService {
       }),
       this.prisma.product.count({ where }),
     ]);
+    const products = raw.map(withPriceRange);
 
     return {
       status: true,
@@ -134,9 +235,12 @@ export class ProductService {
     };
   }
 
-  async getBySlug(slug: string): Promise<ApiResponse<any>> {
+  async getOne(idOrSlug: string): Promise<ApiResponse<any>> {
     const product = await this.prisma.product.findFirst({
-      where: { slug, isActive: true },
+      where: {
+        isActive: true,
+        OR: [{ id: idOrSlug }, { slug: idOrSlug }],
+      },
       include: PRODUCT_DETAIL_INCLUDE,
     });
 
@@ -145,19 +249,29 @@ export class ProductService {
     return {
       status: true,
       message: 'Product fetched successfully',
-      data: product,
+      data: toProductDetailResponse(product),
     };
   }
 
   // ── Admin mutations ──────────────────────────────────────────────────────────
 
-  async create(input: CreateProductDto): Promise<ApiResponse<any>> {
+  async create(
+    input: CreateProductDto,
+    files?: Express.Multer.File[]
+  ): Promise<ApiResponse<any>> {
     const category = await this.prisma.category.findUnique({ where: { id: input.categoryId } });
     if (!category) throw new NotFoundException('Category not found');
 
     if (input.discountId) {
       const discount = await this.prisma.discount.findUnique({ where: { id: input.discountId } });
       if (!discount) throw new NotFoundException('Discount not found');
+    }
+
+    if (files && files.length > 0) {
+      if (files.length > MAX_PRODUCT_IMAGES) {
+        throw new BadRequestException(`Cannot attach more than ${MAX_PRODUCT_IMAGES} images to a product`);
+      }
+      files.forEach((file) => validateImageFile(file));
     }
 
     const slug = await generateUniqueSlug(input.name, (s) =>
@@ -182,29 +296,38 @@ export class ProductService {
       include: PRODUCT_DETAIL_INCLUDE,
     });
 
+    //create images
+    let images = files ? await Promise.all(
+      files.map(async (file, index) => {
+        const key = buildS3ImageKey('products', file.mimetype);
+        const url = await uploadFileToAWSS3(file, key, true, true); // optimize + watermark
+        return this.prisma.productImage.create({
+          data: { 
+            productId: product.id,
+            url, altText: null, 
+            position: index 
+          },
+        });
+      }),
+    ):[];
+
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return {
       status: true,
       message: 'Product created successfully',
-      data: product,
+      data: { ...product, images },
     };
   }
 
-  async update(id: string, input: UpdateProductDto): Promise<ApiResponse<any>> {
+  async update(id: string, input: UpdateProductDto, files?: Express.Multer.File[]): Promise<ApiResponse<any>> {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException('Product not found');
 
-    // explicit slug override: validate uniqueness
-    if (input.slug && input.slug !== product.slug) {
-      const slugTaken = await this.prisma.product.findFirst({
-        where: { slug: input.slug, id: { not: id } },
-      });
-      if (slugTaken) throw new ConflictException(`Slug "${input.slug}" is already in use`);
-    }
 
     // name changed without an explicit slug — regenerate automatically
-    if (input.name && input.name !== product.name && !input.slug) {
-      input.slug = await generateUniqueSlug(input.name, (s) =>
+    let slug: string | undefined;
+    if (input.name && input.name !== product.name) {
+      slug = await generateUniqueSlug(input.name, (s) =>
         this.prisma.product.findFirst({ where: { slug: s, id: { not: id } } }).then(Boolean),
       );
     }
@@ -219,11 +342,30 @@ export class ProductService {
       if (!discount) throw new NotFoundException('Discount not found');
     }
 
+    if (files && files.length > 0) {
+      files.forEach((file) => validateImageFile(file));
+      const existing = await this.prisma.productImage.count({ where: { productId: id } });
+      if (existing + files.length > MAX_PRODUCT_IMAGES) {
+        throw new BadRequestException(
+          `Product already has ${existing} image(s). Adding ${files.length} would exceed the limit of ${MAX_PRODUCT_IMAGES}`,
+        );
+      }
+      await Promise.all(
+        files.map(async (file, index) => {
+          const key = buildS3ImageKey('products', file.mimetype);
+          const url = await uploadFileToAWSS3(file, key, true, true);
+          return this.prisma.productImage.create({
+            data: { productId: id, url, altText: null, position: existing + index },
+          });
+        }),
+      );
+    }
+
     const updated = await this.prisma.product.update({
       where: { id },
       data: {
         ...(input.name !== undefined && { name: input.name }),
-        ...(input.slug !== undefined && { slug: input.slug }),
+        ...((slug !== undefined) && { slug: slug }),
         ...(input.description !== undefined && { description: input.description }),
         ...(input.categoryId !== undefined && { categoryId: input.categoryId }),
         ...(input.isActive !== undefined && { isActive: input.isActive }),
@@ -269,6 +411,43 @@ export class ProductService {
 
   // ── Product image management ─────────────────────────────────────────────────
 
+  async uploadProductImages(
+    productId: string,
+    files: Express.Multer.File[],
+  ): Promise<ApiResponse<any>> {
+    const product = await this.prisma.product.findUnique({ where: { id: productId } });
+    if (!product) throw new NotFoundException('Product not found');
+
+    if (!files || files.length === 0) throw new BadRequestException('At least one image is required');
+
+    // validate all files before touching S3
+    files.forEach((file) => validateImageFile(file));
+
+    const existing = await this.prisma.productImage.count({ where: { productId } });
+    if (existing + files.length > MAX_PRODUCT_IMAGES) {
+      throw new BadRequestException(
+        `Product already has ${existing} image(s). Adding ${files.length} would exceed the limit of ${MAX_PRODUCT_IMAGES}`,
+      );
+    }
+
+    const images = await Promise.all(
+      files.map(async (file, index) => {
+        const key = buildS3ImageKey('products', file.mimetype);
+        const url = await uploadFileToAWSS3(file, key, true, true); // optimize + watermark
+        return this.prisma.productImage.create({
+          data: { productId, url, altText: null, position: existing + index },
+        });
+      }),
+    );
+
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return {
+      status: true,
+      message: `${images.length} image(s) uploaded successfully`,
+      data: images,
+    };
+  }
+
   async attachImage(productId: string, dto: AttachImageDto): Promise<ApiResponse<any>> {
     const product = await this.prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException('Product not found');
@@ -281,14 +460,16 @@ export class ProductService {
     return { status: true, message: 'Image attached to product', data: image };
   }
 
-  async detachImage(productId: string, imageId: string): Promise<ApiResponse<null>> {
-    // imageId here is the ProductImage.id (UUID of the join record)
+  async deleteProductImage(productId: string, imageId: string): Promise<ApiResponse<null>> {
     const image = await this.prisma.productImage.findFirst({ where: { id: imageId, productId } });
-    if (!image) throw new NotFoundException('Image is not attached to this product');
+    if (!image) throw new NotFoundException('Image not found on this product');
 
     await this.prisma.productImage.delete({ where: { id: imageId } });
 
+    // fire-and-forget: only deletes from S3 if no other DB record still references the URL
+    cleanupOrphanedS3Image(image.url, this.prisma, this.logger);
+
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-    return { status: true, message: 'Image detached from product', data: null };
+    return { status: true, message: 'Image deleted successfully', data: null };
   }
 }
