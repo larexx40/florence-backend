@@ -31,7 +31,10 @@ import { UploadFile, filePipe } from 'src/common/helpers/file-upload.helper';
 import { CategoryService } from './category.service';
 import {
   CategoryListResponseDto,
+  CategoryOptionListResponseDto,
+  CategoryOptionQueryDto,
   CategoryOptionResponseDto,
+  CategoryOptionWithCategoryDto,
   CategoryQueryDto,
   CategoryResponseDto,
   CategoryTreeResponseDto,
@@ -52,6 +55,8 @@ import {
   CategoryListResponseDto,
   CategoryTreeResponseDto,
   CategoryOptionResponseDto,
+  CategoryOptionWithCategoryDto,
+  CategoryOptionListResponseDto,
   CategoryWithOptionsResponseDto,
   CategoryWithOptionsListResponseDto,
 )
@@ -98,6 +103,26 @@ export class CategoryController {
   })
   getTree() {
     return this.categoryService.getTree();
+  }
+
+  @Get('admin/options')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List all category options across all categories with search, sort, filter, and pagination (admin only)' })
+  @ApiOkResponse({
+    description: 'Category options returned',
+    schema: {
+      properties: {
+        status: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Category options fetched successfully' },
+        data: { $ref: getSchemaPath(CategoryOptionListResponseDto) },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  getAllOptions(@Query() query: CategoryOptionQueryDto) {
+    return this.categoryService.getAllOptions(query);
   }
 
   @Get('admin')

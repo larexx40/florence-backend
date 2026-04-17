@@ -19,7 +19,10 @@ import {
 } from 'src/common/helpers/image.helper';
 import {
   CategoryListResponseDto,
+  CategoryOptionListResponseDto,
+  CategoryOptionQueryDto,
   CategoryOptionResponseDto,
+  CategoryOptionWithCategoryDto,
   CategoryQueryDto,
   CategoryResponseDto,
   CategoryTreeResponseDto,
@@ -454,6 +457,63 @@ export class CategoryService {
   }
 
   // ── Category options ─────────────────────────────────────────────────────────
+
+  async getAllOptions(
+    query: CategoryOptionQueryDto,
+  ): Promise<ApiResponse<CategoryOptionListResponseDto>> {
+    const page = Math.max(1, parseInt(query.page ?? '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(query.limit ?? '20', 10)));
+    const sortBy = query.sortBy ?? 'name';
+    const sortOrder = query.sortOrder ?? 'asc';
+
+    const where: Prisma.CategoryOptionWhereInput = {
+      ...(query.categoryId && { categoryId: query.categoryId }),
+      ...(query.isRequired !== undefined && { isRequired: query.isRequired }),
+      ...(query.search && { name: { contains: query.search, mode: 'insensitive' } }),
+    };
+
+    const orderBy = { [sortBy]: sortOrder };
+
+    const include = { category: { select: { id: true, name: true } } };
+
+    if (query.all) {
+      const rows = await this.prisma.categoryOption.findMany({ where, include, orderBy });
+      const total = rows.length;
+      return {
+        status: true,
+        message: 'Category options fetched successfully',
+        data: {
+          options: rows as unknown as CategoryOptionWithCategoryDto[],
+          pagination: { totalData: total, totalPages: 1, currentPage: 1, perPage: total },
+        },
+      };
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.categoryOption.findMany({
+        where,
+        include,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.categoryOption.count({ where }),
+    ]);
+
+    return {
+      status: true,
+      message: 'Category options fetched successfully',
+      data: {
+        options: rows as unknown as CategoryOptionWithCategoryDto[],
+        pagination: {
+          totalData: total,
+          totalPages: Math.ceil(total / limit),
+          currentPage: page,
+          perPage: limit,
+        },
+      },
+    };
+  }
 
   async getOptions(categoryId: string): Promise<ApiResponse<CategoryOptionResponseDto[]>> {
     await this.findOrThrow(categoryId);
