@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Request, UseGuards } from '@nestjs/common';
 import {
   ApiExtraModels,
   ApiOkResponse,
@@ -13,12 +13,15 @@ import { AuthService } from './auth.service';
 import {
   ForgotPasswordDto,
   LoginDto,
+  LogoutDto,
   RefreshTokenDto,
   ResetPasswordDto,
 } from './dto/auth.dto';
 import { LoginResponseData } from 'src/common/types';
 import { LoginResponseDto, RefreshTokenDataDto } from './responses/auth.responses';
 import { UserDto } from 'src/common/dto/user.dto';
+import { AuthGuard } from 'src/guards/account.guard';
+import { IRequest } from 'src/common/types';
 
 @ApiTags('auth')
 @ApiSecurity('x-api-key')
@@ -94,5 +97,26 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
   async refreshToken(@Body() dto: RefreshTokenDto): Promise<ApiDataResponse<{ accessToken: string }>> {
     return this.authService.refreshToken(dto);
+  }
+
+  @Post('logout')
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Invalidate the current user session tokens' })
+  @ApiOkResponse({
+    description: 'Logout successful',
+    schema: {
+      properties: {
+        status: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Logout successful' },
+        data: { type: 'object', nullable: true, example: null },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Invalid or expired token' })
+  async logout(
+    @Request() request: IRequest,
+    @Body() dto: LogoutDto,
+  ): Promise<ApiDataResponse<null>> {
+    return this.authService.logout(request.user.userId, dto.refreshToken);
   }
 }

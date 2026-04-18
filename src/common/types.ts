@@ -7,6 +7,7 @@ export interface AuthUser {
     username: string;
     role: Role;
     isActive: boolean;
+    tokenVersion: number
 }
 
 export interface IRequest extends Request {

@@ -11,6 +11,7 @@ import { ApiResponse, IRequest, LoginResponseData } from 'src/common/types';
 import {
   ForgotPasswordDto,
   LoginDto,
+  LogoutDto,
   RefreshTokenDto,
   ResetPasswordDto,
 } from './dto/auth.dto';
@@ -19,6 +20,11 @@ import { User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as jwt from 'jsonwebtoken';
 import { createRandomToken } from 'src/common/helpers/helper';
+
+type RefreshTokenPayload = {
+  userId: string;
+  tokenVersion: number;
+};
 
 @Injectable()
 export class AuthService {
@@ -125,7 +131,13 @@ export class AuthService {
     const hashed = await bcrypt.hash(password, 10);
 
     await this.prisma.$transaction([
-      this.prisma.user.update({ where: { id: user.id }, data: { password: hashed } }),
+      this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          password: hashed,
+          tokenVersion: { increment: 1 },
+        },
+      }),
       this.prisma.otp.update({ where: { id: recentOtp.id }, data: { used: true } }),
     ]);
 
@@ -136,19 +148,60 @@ export class AuthService {
     const refreshKey = process.env.JWT_SECRET_REFRESH_KEY ?? process.env.JWT_SECRET_ACCESS_KEY;
     if (!refreshKey) throw new Error('JWT refresh key is not configured');
 
-    let decoded: { userId: string };
+    let decoded: RefreshTokenPayload;
     try {
-      decoded = jwt.verify(dto.refreshToken, refreshKey) as { userId: string };
+      decoded = jwt.verify(dto.refreshToken, refreshKey) as RefreshTokenPayload;
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: decoded.userId } });
     if (!user || !user.isActive) throw new UnauthorizedException('User not found or account inactive');
+    if (decoded.tokenVersion !== user.tokenVersion) {
+      throw new UnauthorizedException('Refresh token has been invalidated');
+    }
 
     const { accessToken } = this.generateTokens(user);
 
     return { status: true, message: 'Token refreshed successfully', data: { accessToken } };
+  }
+
+  async logout(userId: string, refreshToken?: LogoutDto['refreshToken']): Promise<ApiResponse<null>> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        tokenVersion: true,
+      },
+    });
+    if (!user) throw new UnauthorizedException('User not found');
+
+    if (refreshToken) {
+      const refreshKey = process.env.JWT_SECRET_REFRESH_KEY ?? process.env.JWT_SECRET_ACCESS_KEY;
+      if (!refreshKey) throw new Error('JWT refresh key is not configured');
+
+      let decoded: RefreshTokenPayload;
+      try {
+        decoded = jwt.verify(refreshToken, refreshKey) as RefreshTokenPayload;
+      } catch {
+        throw new UnauthorizedException('Invalid or expired refresh token');
+      }
+
+      if (decoded.userId !== userId) {
+        throw new UnauthorizedException('Refresh token does not belong to the authenticated user');
+      }
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        tokenVersion: {
+          increment: 1,
+        },
+      },
+    });
+
+    return { status: true, message: 'Logout successful', data: null };
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────
@@ -165,11 +218,16 @@ export class AuthService {
       username: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
       role: user.role,
       isActive: user.isActive,
+      tokenVersion: user.tokenVersion,
     };
 
     const accessToken = jwt.sign(payload, accessKey, { expiresIn: '1d' });
-    // refresh token only carries userId — no role/permission claims
-    const refreshToken = jwt.sign({ userId: user.id }, refreshKey, { expiresIn: '7d' });
+    // refresh token carries userId + tokenVersion so logout can invalidate it immediately
+    const refreshToken = jwt.sign(
+      { userId: user.id, tokenVersion: user.tokenVersion },
+      refreshKey,
+      { expiresIn: '7d' },
+    );
 
     return { accessToken, refreshToken };
   }

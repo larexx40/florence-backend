@@ -35,6 +35,13 @@ export class RefreshTokenDto {
   refreshToken: string;
 }
 
+export class LogoutDto {
+  @ApiProperty({ example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...', required: false })
+  @IsOptional()
+  @IsString({ message: 'Refresh token must be a string' })
+  refreshToken?: string;
+}
+
 export class ForgotPasswordDto {
   @ApiProperty({ example: 'user@example.com' })
   @IsNotEmpty({ message: 'Email is required' })

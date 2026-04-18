@@ -2,7 +2,6 @@ import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from
 import { AuthTokenPayload, RequestWithAuth } from 'src/auth/types/auth.type';
 import * as jwt from 'jsonwebtoken';
 import { PrismaService } from 'src/prisma/prisma.service';
-
 @Injectable()
 export class AuthGuard implements CanActivate {
     constructor(private readonly prisma: PrismaService) { }
@@ -32,6 +31,7 @@ export class AuthGuard implements CanActivate {
                     createdAt: true,
                     updatedAt: true,
                     lastLogin: true, 
+                    tokenVersion: true,
                 },
             })
 
@@ -40,6 +40,9 @@ export class AuthGuard implements CanActivate {
             }
             if (user.isActive !== true) {
                 throw new UnauthorizedException('Account is not active, contact support');
+            }
+            if ((payload.tokenVersion ?? 0) !== user.tokenVersion) {
+                throw new UnauthorizedException('Token has been invalidated');
             }
             // Use fresh DB role so role changes take effect without re-login
             request.user = { ...payload, role: user.role };
