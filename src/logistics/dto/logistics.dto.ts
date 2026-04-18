@@ -113,3 +113,17 @@ export class AddCoverageDto {
     @Type(() => Number)
     shippingFee?: number;
 }
+
+export class UpdateCoverageDto {
+    @ApiPropertyOptional({ example: 2000, description: 'New shipping fee' })
+    @IsNumber()
+    @Min(0)
+    @IsOptional()
+    @Type(() => Number)
+    shippingFee?: number;
+
+    @ApiPropertyOptional({ example: 'uuid-of-lga', description: 'Replace or clear the LGA — pass null to remove' })
+    @IsUUID()
+    @IsOptional()
+    localGovernmentId?: string;
+}

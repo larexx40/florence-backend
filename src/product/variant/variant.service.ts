@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -9,8 +10,12 @@ import { ApiResponse, PaginatedData } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
 import { generateVariantSku } from 'src/common/helpers/slug.helper';
+import { buildS3ImageKey, cleanupOrphanedS3Image, validateImageFile } from 'src/common/helpers/image.helper';
+import { uploadFileToAWSS3 } from 'src/common/helpers/s3.upload.helper';
 import { AttachImageDto } from 'src/image/dto/image.dto';
-import { BulkCreateVariantsDto, CreateVariantDto, UpdateStockDto, UpdateVariantDto, VariantQueryDto } from './dto/variant.dto';
+import { BulkCreateVariantsDto, BulkUpdateVariantsDto, CreateVariantDto, UpdateStockDto, UpdateVariantDto, VariantQueryDto } from './dto/variant.dto';
+
+const MAX_VARIANT_IMAGES = 2;
 
 // ── Shared include ────────────────────────────────────────────────────────────
 
@@ -33,6 +38,8 @@ const VARIANT_INCLUDE = {
 
 @Injectable()
 export class VariantService {
+  private readonly logger = new Logger(VariantService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
@@ -69,6 +76,7 @@ export class VariantService {
 
     const where = {
       productId,
+      isDeleted: false,
       ...(!query.includeInactive && { isActive: true }),
       ...(query.inStock && { stockQty: { gt: 0 } }),
     };
@@ -349,6 +357,45 @@ export class VariantService {
     return { status: true, message: 'Variants created successfully', data: created };
   }
 
+  async updateBulk(productId: string, input: BulkUpdateVariantsDto): Promise<ApiResponse<any[]>> {
+    await this.findProductOrThrow(productId);
+
+    const variantIds = input.variants.map((v) => v.variantId);
+
+    const existing = await this.prisma.productVariant.findMany({
+      where: { id: { in: variantIds }, productId },
+      select: { id: true },
+    });
+
+    const foundIds = new Set(existing.map((v) => v.id));
+    const invalid = variantIds.filter((id) => !foundIds.has(id));
+    if (invalid.length) {
+      throw new NotFoundException(
+        `These variant IDs were not found on this product: ${invalid.join(', ')}`,
+      );
+    }
+
+    const updated = await this.prisma.$transaction(
+      input.variants.map((v) =>
+        this.prisma.productVariant.update({
+          where: { id: v.variantId },
+          data: {
+            ...(v.price !== undefined && { price: v.price }),
+            ...(v.compareAtPrice !== undefined && { compareAtPrice: v.compareAtPrice }),
+            ...(v.isActive !== undefined && { isActive: v.isActive }),
+            ...(v.weightKg !== undefined && { weightKg: v.weightKg }),
+            ...(v.minQty !== undefined && { minQty: v.minQty }),
+            ...(v.maxQty !== undefined && { maxQty: v.maxQty }),
+          },
+          include: VARIANT_INCLUDE,
+        }),
+      ),
+    );
+
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return { status: true, message: 'Variants updated successfully', data: updated };
+  }
+
   async update(
     productId: string,
     variantId: string,
@@ -392,28 +439,27 @@ export class VariantService {
 
   async remove(productId: string, variantId: string): Promise<ApiResponse<null>> {
     await this.findVariantOrThrow(productId, variantId);
-
-    const inOrders = await this.prisma.orderItem.findFirst({ where: { variantId } });
-    if (inOrders) {
-      // soft-delete — preserve order history references
-      await this.prisma.productVariant.update({ where: { id: variantId }, data: { isActive: false } });
-      await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-      return {
-        status: true,
-        message: 'Variant deactivated (it exists in order history)',
-        data: null,
-      };
-    }
-
-    await this.prisma.$transaction([
-      this.prisma.variantOptionValue.deleteMany({ where: { variantId } }),
-      this.prisma.variantImage.deleteMany({ where: { variantId } }),
-      this.prisma.cartItem.deleteMany({ where: { variantId } }),
-      this.prisma.productVariant.delete({ where: { id: variantId } }),
-    ]);
-
+    await this.prisma.productVariant.update({
+      where: { id: variantId },
+      data: { isDeleted: true, isActive: false },
+    });
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return { status: true, message: 'Variant deleted successfully', data: null };
+  }
+
+  async toggleStatus(productId: string, variantId: string): Promise<ApiResponse<any>> {
+    const variant = await this.findVariantOrThrow(productId, variantId);
+    const updated = await this.prisma.productVariant.update({
+      where: { id: variantId },
+      data: { isActive: !variant.isActive },
+      include: VARIANT_INCLUDE,
+    });
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return {
+      status: true,
+      message: `Variant ${updated.isActive ? 'enabled' : 'disabled'} successfully`,
+      data: updated,
+    };
   }
 
   // ── Variant image management ─────────────────────────────────────────────────
@@ -447,5 +493,59 @@ export class VariantService {
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return { status: true, message: 'Image detached from variant', data: null };
+  }
+
+  async uploadVariantImages(
+    productId: string,
+    variantId: string,
+    files: Express.Multer.File[],
+  ): Promise<ApiResponse<any>> {
+    await this.findVariantOrThrow(productId, variantId);
+
+    if (!files || files.length === 0) throw new BadRequestException('At least one image is required');
+
+    files.forEach((file) => validateImageFile(file));
+
+    const existing = await this.prisma.variantImage.count({ where: { variantId } });
+    if (existing + files.length > MAX_VARIANT_IMAGES) {
+      throw new BadRequestException(
+        `Variant already has ${existing} image(s). Adding ${files.length} would exceed the limit of ${MAX_VARIANT_IMAGES}`,
+      );
+    }
+
+    const images = await Promise.all(
+      files.map(async (file, index) => {
+        const key = buildS3ImageKey('variants', file.mimetype);
+        const url = await uploadFileToAWSS3(file, key, true, true);
+        return this.prisma.variantImage.create({
+          data: { variantId, url, altText: null, position: existing + index },
+        });
+      }),
+    );
+
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return {
+      status: true,
+      message: `${images.length} image(s) uploaded successfully`,
+      data: images,
+    };
+  }
+
+  async deleteVariantImage(
+    productId: string,
+    variantId: string,
+    imageId: string,
+  ): Promise<ApiResponse<null>> {
+    await this.findVariantOrThrow(productId, variantId);
+
+    const image = await this.prisma.variantImage.findFirst({ where: { id: imageId, variantId } });
+    if (!image) throw new NotFoundException('Image not found on this variant');
+
+    await this.prisma.variantImage.delete({ where: { id: imageId } });
+
+    cleanupOrphanedS3Image(image.url, this.prisma, this.logger);
+
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return { status: true, message: 'Image deleted successfully', data: null };
   }
 }

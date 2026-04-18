@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Query,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
@@ -24,6 +25,8 @@ import { StaffGuard } from 'src/guards/staff.guard';
 import { OrderService } from './order.service';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { UpdateOrderStatusDto } from './dto/update-order.dto';
+import { AuthGuard } from 'src/guards/account.guard';
+import { IRequest } from 'src/common/types';
 
 @ApiTags('orders')
 @ApiSecurity('x-api-key')
@@ -33,7 +36,7 @@ export class OrderController {
   constructor(private readonly orderService: OrderService) {}
 
   @Get()
-  @UseGuards(StaffGuard)
+  @UseGuards(AuthGuard, StaffGuard)
   @ApiOperation({ summary: 'List all orders with optional filters (staff/admin)' })
   @ApiResponse({ status: 200, description: 'Paginated list of orders' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
@@ -43,15 +46,18 @@ export class OrderController {
   }
 
   @Get(':id')
-  @UseGuards(StaffGuard)
+  @UseGuards(AuthGuard, StaffGuard)
   @ApiOperation({ summary: 'Get a single order by ID (staff/admin)' })
   @ApiParam({ name: 'id', description: 'Order UUID' })
   @ApiResponse({ status: 200, description: 'Order detail' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Order not found' })
-  getOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.orderService.getOne(id);
+  getOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IRequest,
+  ) {
+    return this.orderService.getOne(id, req);
   }
 
   @Patch(':id/status')
@@ -86,7 +92,7 @@ export class OrderController {
   }
 
   @Get(':id/receipt')
-  @UseGuards(StaffGuard)
+  @UseGuards(AuthGuard,StaffGuard)
   @Header('Content-Type', 'text/html; charset=utf-8')
   @ApiOperation({
     summary: 'Get printable thermal receipt for an order (staff/admin)',

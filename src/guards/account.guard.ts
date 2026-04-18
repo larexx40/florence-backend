@@ -16,7 +16,6 @@ export class AuthGuard implements CanActivate {
         }
 
         const token = authorizationHeader.split(' ')[1];
-        console.log(token);
         try {
             
             const payload = jwt.verify(token, process.env.JWT_SECRET_ACCESS_KEY) as AuthTokenPayload; // Use jsonwebtoken to verify
@@ -42,7 +41,8 @@ export class AuthGuard implements CanActivate {
             if (user.isActive !== true) {
                 throw new UnauthorizedException('Account is not active, contact support');
             }
-            request.user = payload; // Attach the payload to the request
+            // Use fresh DB role so role changes take effect without re-login
+            request.user = { ...payload, role: user.role };
             return true;
         } catch (error) {
             // console.log(error);

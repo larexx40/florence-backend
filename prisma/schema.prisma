@@ -171,6 +171,7 @@ model Category {
   imageUrl    String?  @map("image_url")
   parentId    String?  @map("parent_id")
   isActive    Boolean  @default(true) @map("is_active")
+  isDeleted   Boolean  @default(false) @map("is_deleted")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -191,6 +192,8 @@ model CategoryOption {
   categoryId  String   @map("category_id")
   name        String   @map("name")       // "Color", "Size", "Material"
   isRequired  Boolean  @default(false) @map("is_required")
+  isActive    Boolean  @default(true)  @map("is_active")
+  isDeleted   Boolean  @default(false) @map("is_deleted")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -200,6 +203,7 @@ model CategoryOption {
   // one option name per category — no duplicate "Color" under Bags
   @@unique([categoryId, name])
   @@index([categoryId])
+  @@index([isDeleted])
   @@map("category_options")
 }
 
@@ -245,6 +249,7 @@ model Product {
   description           String?  @map("description")
   categoryId            String   @map("category_id")
   isActive              Boolean  @default(true) @map("is_active")
+  isDeleted             Boolean  @default(false) @map("is_deleted")
   // false = product sold as-is, no variant selector shown to buyer
   requiresVariant       Boolean  @default(true) @map("requires_variant")
   minOrderQty           Int      @default(1) @map("min_order_qty")
@@ -304,6 +309,8 @@ model ProductOptionValue {
   productOptionId String   @map("product_option_id")
   value           String   @map("value")        // "Black", "XL", "Cotton"
   colorHex        String?  @map("color_hex")    // "#000000" — for colour swatches
+  isActive        Boolean  @default(true)  @map("is_active")
+  isDeleted       Boolean  @default(false) @map("is_deleted")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -313,6 +320,7 @@ model ProductOptionValue {
   // no duplicate values within the same product option
   @@unique([productOptionId, value])
   @@index([productOptionId])
+  @@index([isDeleted])
   @@map("product_option_values")
 }
 
@@ -329,7 +337,8 @@ model ProductVariant {
   compareAtPrice Decimal? @map("compare_at_price") @db.Decimal(12, 2)
   stockQty       Int      @default(0) @map("stock_qty")
   // false = this specific combination is disabled regardless of stock
-  isActive       Boolean  @default(true) @map("is_active")
+  isActive       Boolean  @default(true)  @map("is_active")
+  isDeleted      Boolean  @default(false) @map("is_deleted")
   // per-variant quantity overrides — null falls back to product.minOrderQty / no cap
   minQty         Int?     @map("min_qty")
   maxQty         Int?     @map("max_qty")
@@ -347,6 +356,7 @@ model ProductVariant {
 
   @@index([productId])
   @@index([sku])
+  @@index([isDeleted])
   @@map("product_variants")
 }
 

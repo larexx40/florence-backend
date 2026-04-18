@@ -1,5 +1,5 @@
 import { Role } from '@prisma/client';
-import { Transform, TransformFnParams } from 'class-transformer';
+import { Transform, TransformFnParams, Type } from 'class-transformer';
 import {
   IsBoolean,
   IsEmail,
@@ -158,12 +158,14 @@ export class UserQueryDto {
 
   @ApiPropertyOptional({ example: 1, minimum: 1 })
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   page?: number;
 
   @ApiPropertyOptional({ example: 20, minimum: 1 })
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   limit?: number;
@@ -172,12 +174,14 @@ export class UserQueryDto {
 export class UserOrderQueryDto {
   @ApiPropertyOptional({ example: 1, minimum: 1 })
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   page?: number;
 
   @ApiPropertyOptional({ example: 20, minimum: 1 })
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   limit?: number;

@@ -19,7 +19,7 @@ import {
 
 const OPTION_INCLUDE = {
   categoryOption: { select: { id: true, name: true } },
-  values: { orderBy: { createdAt: 'asc' as const } },
+  values: { where: { isDeleted: false }, orderBy: { createdAt: 'asc' as const } },
 } as const;
 
 @Injectable()
@@ -44,7 +44,7 @@ export class OptionService {
 
   private async findValueOrThrow(optionId: string, valueId: string) {
     const value = await this.prisma.productOptionValue.findFirst({
-      where: { id: valueId, productOptionId: optionId },
+      where: { id: valueId, productOptionId: optionId, isDeleted: false },
     });
     if (!value) throw new NotFoundException('Option value not found');
     return value;
@@ -255,18 +255,32 @@ export class OptionService {
   ): Promise<ApiResponse<null>> {
     await this.findProductOrThrow(productId);
     await this.findOptionOrThrow(productId, optionId);
-    const existing = await this.findValueOrThrow(optionId, valueId);
+    await this.findValueOrThrow(optionId, valueId);
 
-    const inUse = await this.prisma.variantOptionValue.findFirst({
-      where: { productOptionValueId: valueId },
+    await this.prisma.productOptionValue.update({
+      where: { id: valueId },
+      data: { isDeleted: true, isActive: false },
     });
-    if (inUse) {
-      throw new BadRequestException(
-        `Cannot delete "${existing.value}" — it is used by a variant. Delete the variant first.`,
-      );
-    }
-
-    await this.prisma.productOptionValue.delete({ where: { id: valueId } });
     return { status: true, message: 'Option value deleted successfully', data: null };
+  }
+
+  async toggleValueStatus(
+    productId: string,
+    optionId: string,
+    valueId: string,
+  ): Promise<ApiResponse<any>> {
+    await this.findProductOrThrow(productId);
+    await this.findOptionOrThrow(productId, optionId);
+    const value = await this.findValueOrThrow(optionId, valueId);
+
+    const updated = await this.prisma.productOptionValue.update({
+      where: { id: valueId },
+      data: { isActive: !value.isActive },
+    });
+    return {
+      status: true,
+      message: `Option value ${updated.isActive ? 'enabled' : 'disabled'} successfully`,
+      data: updated,
+    };
   }
 }

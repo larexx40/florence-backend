@@ -105,7 +105,7 @@ export class CategoryController {
     return this.categoryService.getTree();
   }
 
-  @Get('admin/options')
+  @Get('options')
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List all category options across all categories with search, sort, filter, and pagination (admin only)' })
@@ -272,10 +272,23 @@ export class CategoryController {
     return this.categoryService.update(id, input, file);
   }
 
+  @Patch(':id/toggle')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Enable or disable a category (admin only)' })
+  @ApiParam({ name: 'id', description: 'Category UUID' })
+  @ApiResponse({ status: 200, description: 'Category enabled or disabled' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Category not found' })
+  toggleStatus(@Param('id') id: string) {
+    return this.categoryService.toggleStatus(id);
+  }
+
   @Delete(':id')
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Delete or deactivate a category (admin only)' })
+  @ApiOperation({ summary: 'Soft-delete a category (admin only)' })
   @ApiParam({ name: 'id', description: 'Category UUID' })
   @ApiOkResponse({
     description: 'Category deleted or deactivated',
@@ -374,10 +387,27 @@ export class CategoryController {
     return this.categoryService.updateOption(categoryId, optionId, input);
   }
 
+  @Patch(':categoryId/options/:optionId/toggle')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Enable or disable a category option (admin only)' })
+  @ApiParam({ name: 'categoryId', description: 'Category UUID' })
+  @ApiParam({ name: 'optionId', description: 'CategoryOption UUID' })
+  @ApiResponse({ status: 200, description: 'Option enabled or disabled' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Category or option not found' })
+  toggleOptionStatus(
+    @Param('categoryId') categoryId: string,
+    @Param('optionId') optionId: string,
+  ) {
+    return this.categoryService.toggleOptionStatus(categoryId, optionId);
+  }
+
   @Delete(':categoryId/options/:optionId')
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Delete a category option and all its values (admin only)' })
+  @ApiOperation({ summary: 'Soft-delete a category option (admin only)' })
   @ApiParam({ name: 'categoryId', description: 'Category UUID' })
   @ApiParam({ name: 'optionId', description: 'CategoryOption UUID' })
   @ApiOkResponse({

@@ -47,6 +47,15 @@ export class ProductController {
     return this.productService.getAll(query);
   }
 
+  @Get('config')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get product configuration limits (admin only)' })
+  @ApiResponse({ status: 200, description: 'Configuration returned' })
+  getProductConfig() {
+    return this.productService.getProductConfig();
+  }
+  
   @Get(':idOrSlug')
   @UseInterceptors(CacheInterceptor)
   @Cacheable(600)
@@ -98,12 +107,25 @@ export class ProductController {
     return this.productService.update(id, input, files);
   }
 
+  @Patch(':id/toggle')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Enable or disable a product (admin only)' })
+  @ApiParam({ name: 'id', description: 'Product UUID' })
+  @ApiResponse({ status: 200, description: 'Product enabled or disabled' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Product not found' })
+  toggleStatus(@Param('id', ParseUUIDPipe) id: string) {
+    return this.productService.toggleStatus(id);
+  }
+
   @Delete(':id')
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Deactivate a product (admin only) — soft delete' })
+  @ApiOperation({ summary: 'Soft-delete a product (admin only)' })
   @ApiParam({ name: 'id', description: 'Product UUID' })
-  @ApiResponse({ status: 200, description: 'Product deactivated' })
+  @ApiResponse({ status: 200, description: 'Product deleted' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
   @ApiResponse({ status: 404, description: 'Product not found' })

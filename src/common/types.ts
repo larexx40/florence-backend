@@ -1,9 +1,16 @@
-import { User } from "@prisma/client";
 import { Request } from "express";
-import { AuthTokenPayload } from "src/auth/types/auth.type";
+import { Role, User } from "@prisma/client";
+
+export interface AuthUser {
+    userId: string;
+    email: string;
+    username: string;
+    role: Role;
+    isActive: boolean;
+}
 
 export interface IRequest extends Request {
-    user: AuthTokenPayload
+    user: AuthUser;
 }
 
 export interface ApiResponse<T> {

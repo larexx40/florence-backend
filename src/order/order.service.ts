@@ -1,9 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { ApiResponse, PaginatedData } from 'src/common/types';
+import { ApiResponse, IRequest, PaginatedData } from 'src/common/types';
 import { buildReceiptHtml, ReceiptOrder } from './receipt.template';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { UpdateOrderStatusDto } from './dto/update-order.dto';
@@ -82,9 +82,14 @@ export class OrderService {
 
   // ── Single order ─────────────────────────────────────────────────────────────
 
-  async getOne(id: string): Promise<ApiResponse<OrderDetail>> {
+  async getOne(id: string, req: IRequest): Promise<ApiResponse<OrderDetail>> {
+    if(!req.user) throw new UnauthorizedException("Unauthorized user access");
+
     const order = await this.prisma.order.findUnique({
-      where: { id },
+      where: { 
+        id,
+        ...(req.user.role === 'CUSTOMER' ? { userId: req.user.userId } : {}) 
+      },
       include: ORDER_DETAIL_INCLUDE,
     });
     if (!order) throw new NotFoundException('Order not found');

@@ -15,6 +15,7 @@ import { buildS3ImageKey, cleanupOrphanedS3Image, validateImageFile } from 'src/
 import { uploadFileToAWSS3 } from 'src/common/helpers/s3.upload.helper';
 import { AttachImageDto } from 'src/image/dto/image.dto';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
+import { max } from 'class-validator';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -255,6 +256,31 @@ export class ProductService {
 
   // ── Admin mutations ──────────────────────────────────────────────────────────
 
+  async getProductConfig(): Promise<ApiResponse<any>> {
+    const MAX_UPLOAD_SIZE_MB = 5;
+    const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
+    const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+    const MAX_PRODUCT_IMAGES = 5;
+    const MAX_VARIANTS_PER_PRODUCT = 100;
+    const MAX_OPTIONS_PER_CATEGORY = 10;
+    const MAX_VALUES_PER_OPTION = 50;
+    const MAX_VARIANT_IMAGES = 2;
+
+    return{
+      status: true,
+      message: 'Product configuration fetched successfully',
+      data: {
+        maxUploadSizeMB: MAX_UPLOAD_SIZE_MB,
+        maxUploadSizeBytes: MAX_UPLOAD_SIZE_BYTES,
+        allowedImageTypes: ALLOWED_IMAGE_TYPES,
+        maxProductImages: MAX_PRODUCT_IMAGES,
+        maxVariantsPerProduct: MAX_VARIANTS_PER_PRODUCT,
+        maxOptionsPerCategory: MAX_OPTIONS_PER_CATEGORY,
+        maxValuesPerOption: MAX_VALUES_PER_OPTION,
+        maxVariantImages: MAX_VARIANT_IMAGES,
+      }
+    }
+  }
   async create(
     input: CreateProductDto,
     files?: Express.Multer.File[]
@@ -395,16 +421,22 @@ export class ProductService {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException('Product not found');
 
-    // soft-delete — preserve order history references
-    await this.prisma.product.update({
-      where: { id },
-      data: { isActive: false },
-    });
+    await this.prisma.product.update({ where: { id }, data: { isDeleted: true, isActive: false } });
+
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
+    return { status: true, message: 'Product deleted successfully', data: null };
+  }
+
+  async toggleStatus(id: string): Promise<ApiResponse<null>> {
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    if (!product) throw new NotFoundException('Product not found');
+
+    await this.prisma.product.update({ where: { id }, data: { isActive: !product.isActive } });
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return {
       status: true,
-      message: 'Product deactivated successfully',
+      message: `Product ${!product.isActive ? 'enabled' : 'disabled'} successfully`,
       data: null,
     };
   }

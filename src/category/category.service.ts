@@ -421,39 +421,25 @@ export class CategoryService {
   }
 
   async remove(id: string): Promise<ApiResponse<null>> {
-    const category = await this.findOrThrow(id);
-
-    const hasProducts = await this.prisma.product.findFirst({ where: { categoryId: id } });
-    if (hasProducts) {
-      await this.prisma.category.update({ where: { id }, data: { isActive: false } });
-      await this.cache.invalidateByPrefix(buildInvalidationPrefix('/categories'));
-      return {
-        status: true,
-        message: 'Category deactivated (products are still referencing it)',
-        data: null,
-      };
-    }
-
-    const hasChildren = await this.prisma.category.findFirst({ where: { parentId: id } });
-    if (hasChildren) {
-      await this.prisma.category.update({ where: { id }, data: { isActive: false } });
-      await this.cache.invalidateByPrefix(buildInvalidationPrefix('/categories'));
-      return {
-        status: true,
-        message: 'Category deactivated (it has subcategories)',
-        data: null,
-      };
-    }
-
-    await this.prisma.category.delete({ where: { id } });
+    await this.findOrThrow(id);
+    await this.prisma.category.update({ where: { id }, data: { isDeleted: true, isActive: false } });
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/categories'));
-
-    // After hard delete: clean up the image from S3 if nothing else references it
-    if (category.imageUrl) {
-      cleanupOrphanedS3Image(category.imageUrl, this.prisma, this.logger);
-    }
-
     return { status: true, message: 'Category deleted successfully', data: null };
+  }
+
+  async toggleStatus(id: string): Promise<ApiResponse<any>> {
+    const category = await this.findOrThrow(id);
+    const updated = await this.prisma.category.update({
+      where: { id },
+      data: { isActive: !category.isActive },
+      include: CATEGORY_INCLUDE,
+    });
+    await this.cache.invalidateByPrefix(buildInvalidationPrefix('/categories'));
+    return {
+      status: true,
+      message: `Category ${updated.isActive ? 'enabled' : 'disabled'} successfully`,
+      data: toResponse(updated),
+    };
   }
 
   // ── Category options ─────────────────────────────────────────────────────────
@@ -467,6 +453,7 @@ export class CategoryService {
     const sortOrder = query.sortOrder ?? 'asc';
 
     const where: Prisma.CategoryOptionWhereInput = {
+      isDeleted: false,
       ...(query.categoryId && { categoryId: query.categoryId }),
       ...(query.isRequired !== undefined && { isRequired: query.isRequired }),
       ...(query.search && { name: { contains: query.search, mode: 'insensitive' } }),
@@ -519,7 +506,7 @@ export class CategoryService {
     await this.findOrThrow(categoryId);
 
     const options = await this.prisma.categoryOption.findMany({
-      where: { categoryId },
+      where: { categoryId, isDeleted: false },
       orderBy: { name: 'asc' },
     });
 
@@ -577,19 +564,22 @@ export class CategoryService {
   async removeOption(categoryId: string, optionId: string): Promise<ApiResponse<null>> {
     await this.findOrThrow(categoryId);
     await this.findOptionOrThrow(categoryId, optionId);
-
-    // Block delete if any ProductOptionValue under this option is used by a variant
-    const inUse = await this.prisma.variantOptionValue.findFirst({
-      where: { productOptionValue: { productOption: { categoryOptionId: optionId } } } as any,
-    });
-    if (inUse) {
-      throw new BadRequestException(
-        'Cannot delete this option — one or more of its product values are in use by variants',
-      );
-    }
-
-    await this.prisma.categoryOption.delete({ where: { id: optionId } });
+    await this.prisma.categoryOption.update({ where: { id: optionId }, data: { isDeleted: true, isActive: false } });
     return { status: true, message: 'Option deleted successfully', data: null };
+  }
+
+  async toggleOptionStatus(categoryId: string, optionId: string): Promise<ApiResponse<any>> {
+    await this.findOrThrow(categoryId);
+    const option = await this.findOptionOrThrow(categoryId, optionId);
+    const updated = await this.prisma.categoryOption.update({
+      where: { id: optionId },
+      data: { isActive: !option.isActive },
+    });
+    return {
+      status: true,
+      message: `Option ${updated.isActive ? 'enabled' : 'disabled'} successfully`,
+      data: updated,
+    };
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────

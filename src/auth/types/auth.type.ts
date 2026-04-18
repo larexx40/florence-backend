@@ -1,23 +1,15 @@
-import { Role } from "@prisma/client";
-import { Request } from "express";
-export interface AuthTokenPayload {
-    userId: string;
-    email: string;
-    username: string;
-    role: Role;
-    isActive: boolean;
-    
-}
+import { AuthUser, IRequest } from "src/common/types";
 
-export interface RequestWithAuth extends Request {
-    user: AuthTokenPayload;
-}
+// Canonical auth types live in src/common/types.ts
+// Re-export aliases here for backwards compatibility with existing imports
+export type AuthTokenPayload = AuthUser;
+export type RequestWithAuth = IRequest;
 
 export interface MerchantAuthPayload {
     id: string;
     email: string;
-    role: string; 
+    role: string;
     lastLogin: Date;
     active: boolean;
-    verified: boolean
+    verified: boolean;
 }

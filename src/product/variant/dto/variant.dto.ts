@@ -141,6 +141,60 @@ export class UpdateStockDto {
   stockQty: number;
 }
 
+export class BulkUpdateVariantItemDto {
+  @ApiProperty({ example: 'uuid-of-variant', description: 'Variant UUID to update' })
+  @IsUUID('4', { message: 'variantId must be a valid UUID' })
+  variantId: string;
+
+  @ApiPropertyOptional({ example: 15000 })
+  @IsOptional()
+  @IsNumber()
+  price?: number;
+
+  @ApiPropertyOptional({ example: 17000 })
+  @IsOptional()
+  @IsNumber()
+  compareAtPrice?: number;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @ApiPropertyOptional({ example: 1.2 })
+  @IsOptional()
+  @IsNumber()
+  weightKg?: number;
+
+  @ApiPropertyOptional({ example: 5, minimum: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  minQty?: number;
+
+  @ApiPropertyOptional({ example: 50, minimum: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxQty?: number;
+}
+
+export class BulkUpdateVariantsDto {
+  @ApiProperty({
+    type: [BulkUpdateVariantItemDto],
+    description: 'Array of variants to update atomically — if any one fails, none are saved.',
+    example: [
+      { variantId: '<uuid>', price: 15000, compareAtPrice: 17000 },
+      { variantId: '<uuid>', isActive: false },
+    ],
+  })
+  @IsArray()
+  @ArrayMinSize(1, { message: 'At least one variant is required' })
+  @ValidateNested({ each: true })
+  @Type(() => BulkUpdateVariantItemDto)
+  variants: BulkUpdateVariantItemDto[];
+}
+
 export class BulkCreateVariantsDto {
   @ApiProperty({
     type: [CreateVariantDto],

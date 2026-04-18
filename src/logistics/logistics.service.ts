@@ -1,6 +1,8 @@
 import {
+    BadRequestException,
     ConflictException,
     Injectable,
+    Logger,
     NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -8,10 +10,13 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse, PaginatedData } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
+import { buildS3ImageKey, cleanupOrphanedS3Image, validateImageFile } from 'src/common/helpers/image.helper';
+import { uploadFileToAWSS3 } from 'src/common/helpers/s3.upload.helper';
 import {
     AddCoverageDto,
     CreateLogisticsDto,
     LogisticsQueryDto,
+    UpdateCoverageDto,
     UpdateLogisticsDto,
 } from './dto/logistics.dto';
 
@@ -35,6 +40,8 @@ const COMPANY_INCLUDE = {
 
 @Injectable()
 export class LogisticsService {
+    private readonly logger = new Logger(LogisticsService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly cache: CacheService,
@@ -99,9 +106,16 @@ export class LogisticsService {
         return { status: true, message: 'Logistics company fetched successfully', data: company };
     }
 
-    async create(dto: CreateLogisticsDto): Promise<ApiResponse<any>> {
+    async create(dto: CreateLogisticsDto, file?: Express.Multer.File): Promise<ApiResponse<any>> {
         const existing = await this.prisma.logisticsCompany.findUnique({ where: { name: dto.name } });
         if (existing) throw new ConflictException(`A logistics company named "${dto.name}" already exists`);
+
+        let logoUrl = dto.logoUrl ?? null;
+        if (file) {
+            validateImageFile(file);
+            const key = buildS3ImageKey('logistics', file.mimetype);
+            logoUrl = await uploadFileToAWSS3(file, key, true, false);
+        }
 
         const company = await this.prisma.logisticsCompany.create({
             data: {
@@ -109,7 +123,7 @@ export class LogisticsService {
                 phone: dto.phone ?? null,
                 email: dto.email ?? null,
                 description: dto.description ?? null,
-                logoUrl: dto.logoUrl ?? null,
+                logoUrl,
             },
             include: COMPANY_INCLUDE,
         });
@@ -141,6 +155,43 @@ export class LogisticsService {
         });
         await this.cache.invalidateByPrefix(buildInvalidationPrefix('/logistics'));
         return { status: true, message: 'Logistics company updated successfully', data: updated };
+    }
+
+    async uploadLogo(id: string, file: Express.Multer.File): Promise<ApiResponse<any>> {
+        const company = await this.findOrThrow(id);
+
+        if (!file) throw new BadRequestException('Logo file is required');
+        validateImageFile(file);
+
+        const key = buildS3ImageKey('logistics', file.mimetype);
+        const logoUrl = await uploadFileToAWSS3(file, key, true, false);
+
+        if (company.logoUrl) {
+            cleanupOrphanedS3Image(company.logoUrl, this.prisma, this.logger);
+        }
+
+        const updated = await this.prisma.logisticsCompany.update({
+            where: { id },
+            data: { logoUrl },
+            include: COMPANY_INCLUDE,
+        });
+        await this.cache.invalidateByPrefix(buildInvalidationPrefix('/logistics'));
+        return { status: true, message: 'Logo uploaded successfully', data: updated };
+    }
+
+    async toggleStatus(id: string): Promise<ApiResponse<any>> {
+        const company = await this.findOrThrow(id);
+        const updated = await this.prisma.logisticsCompany.update({
+            where: { id },
+            data: { isActive: !company.isActive },
+            include: COMPANY_INCLUDE,
+        });
+        await this.cache.invalidateByPrefix(buildInvalidationPrefix('/logistics'));
+        return {
+            status: true,
+            message: `Logistics company ${updated.isActive ? 'enabled' : 'disabled'} successfully`,
+            data: updated,
+        };
     }
 
     async remove(id: string): Promise<ApiResponse<null>> {
@@ -188,6 +239,31 @@ export class LogisticsService {
         });
         await this.cache.invalidateByPrefix(buildInvalidationPrefix('/logistics'));
         return { status: true, message: 'Coverage area added successfully', data: coverage };
+    }
+
+    async updateCoverage(companyId: string, coverageId: string, dto: UpdateCoverageDto): Promise<ApiResponse<any>> {
+        await this.findOrThrow(companyId);
+
+        const coverage = await this.prisma.logisticsCoverage.findFirst({
+            where: { id: coverageId, logisticsCompanyId: companyId },
+        });
+        if (!coverage) throw new NotFoundException('Coverage area not found');
+
+        if (dto.localGovernmentId) {
+            const lga = await this.prisma.localGovernment.findUnique({ where: { id: dto.localGovernmentId } });
+            if (!lga) throw new NotFoundException('Local government not found');
+        }
+
+        const updated = await this.prisma.logisticsCoverage.update({
+            where: { id: coverageId },
+            data: {
+                ...(dto.shippingFee !== undefined && { shippingFee: dto.shippingFee }),
+                ...(dto.localGovernmentId !== undefined && { localGovernmentId: dto.localGovernmentId }),
+            },
+            include: COVERAGE_INCLUDE,
+        });
+        await this.cache.invalidateByPrefix(buildInvalidationPrefix('/logistics'));
+        return { status: true, message: 'Coverage area updated successfully', data: updated };
     }
 
     async removeCoverage(companyId: string, coverageId: string): Promise<ApiResponse<null>> {

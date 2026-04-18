@@ -15,6 +15,18 @@ async function bootstrap() {
   );
   app.useGlobalFilters(new GlobalHttpExceptionFilter());
 
+  app.enableCors({
+    origin: [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      process.env.ADMIN_URL,
+      process.env.CLIENT_URL,
+    ].filter(Boolean) as string[],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
+    credentials: true,
+  });
+
   const config = new DocumentBuilder()
     .setTitle('Florence API')
     .setDescription('Florence vendor e-commerce backend API')

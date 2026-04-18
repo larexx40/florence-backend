@@ -166,8 +166,23 @@ export class OptionController {
     return this.optionService.updateValue(productId, optionId, valueId, input);
   }
 
+  @Patch(':optionId/values/:valueId/toggle')
+  @ApiOperation({ summary: 'Enable or disable a product option value (admin only)' })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiParam({ name: 'optionId', description: 'ProductOption UUID' })
+  @ApiParam({ name: 'valueId', description: 'ProductOptionValue UUID' })
+  @ApiResponse({ status: 200, description: 'Value enabled or disabled' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  toggleValueStatus(
+    @Param('productId') productId: string,
+    @Param('optionId') optionId: string,
+    @Param('valueId') valueId: string,
+  ) {
+    return this.optionService.toggleValueStatus(productId, optionId, valueId);
+  }
+
   @Delete(':optionId/values/:valueId')
-  @ApiOperation({ summary: 'Delete a product option value (admin only)' })
+  @ApiOperation({ summary: 'Soft-delete a product option value (admin only)' })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
   @ApiParam({ name: 'optionId', description: 'ProductOption UUID' })
   @ApiParam({ name: 'valueId', description: 'ProductOptionValue UUID' })
