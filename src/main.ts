@@ -23,7 +23,7 @@ async function bootstrap() {
       process.env.CLIENT_URL,
     ].filter(Boolean) as string[],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'Cache-Control', 'Pragma', 'Accept'],
     credentials: true,
   });
 
