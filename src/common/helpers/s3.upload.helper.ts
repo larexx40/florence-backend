@@ -144,6 +144,7 @@ export async function uploadFileToAWSS3(
     shouldOptimize = true,
     watermark = true,
 ): Promise<string> {
+    const startedAt = Date.now();
     if (!file.buffer || file.buffer.length === 0) {
         throw new InternalServerErrorException(
             'File buffer is empty. Ensure multer is configured with memoryStorage.',
@@ -163,19 +164,24 @@ export async function uploadFileToAWSS3(
     let fileBuffer = file.buffer;
 
     if (shouldOptimize && isImage) {
+        const optimizeStartedAt = Date.now();
         const originalSize = fileBuffer.length;
         fileBuffer = await optimizeImage(fileBuffer, file.mimetype);
         const compression = ((1 - fileBuffer.length / originalSize) * 100).toFixed(2);
+        logger.log(`Image optimization took ${Date.now() - optimizeStartedAt}ms for ${Key}`);
         logger.log(
             `Image optimized: ${(originalSize / 1024).toFixed(2)}KB → ${(fileBuffer.length / 1024).toFixed(2)}KB (${compression}% reduction)`,
         );
     }
 
     if (isImage && watermark) {
+        const watermarkStartedAt = Date.now();
         fileBuffer = await addWatermark(fileBuffer, file.mimetype);
+        logger.log(`Watermark step completed in ${Date.now() - watermarkStartedAt}ms for ${Key}`);
     }
 
     try {
+        const uploadStartedAt = Date.now();
         if (fileBuffer.length > MIN_MULTIPART_SIZE) {
             const upload = new Upload({
                 client: s3Client,
@@ -186,6 +192,9 @@ export async function uploadFileToAWSS3(
             await s3Client.send(new PutObjectCommand({ Bucket, Key, Body: fileBuffer, ContentType: file.mimetype }));
         }
 
+        logger.log(`File uploaded to S3: ${Key} (${(fileBuffer.length / 1024).toFixed(2)}KB)`);
+        logger.log(`S3 upload took ${Date.now() - uploadStartedAt}ms for ${Key}`);
+        logger.log(`uploadFileToAWSS3 completed in ${Date.now() - startedAt}ms for ${Key}`);
         return `https://s3.${process.env.AWS_S3_REGION}.amazonaws.com/${Bucket}/${Key}`;
     } catch (err: any) {
         logger.error(`S3 upload failed — key: ${Key}, code: ${err.Code ?? 'unknown'}, message: ${err.message}`);

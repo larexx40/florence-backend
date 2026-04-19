@@ -50,7 +50,7 @@ const CATEGORY_INCLUDE = {
     select: SUBCATEGORY_SELECT,
     orderBy: { name: 'asc' as const },
   },
-  _count: { select: { products: true } },
+  _count: { select: { products: true, children: true } },
 } satisfies Prisma.CategoryInclude;
 
 // ── Mappers ──────────────────────────────────────────────────────────────────
