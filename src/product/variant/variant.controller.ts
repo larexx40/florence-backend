@@ -95,36 +95,49 @@ export class VariantController {
   @Post()
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create a variant for a product (admin only)' })
+  @UploadFiles('images', 2)
+  @ApiOperation({
+    summary: 'Create a variant for a product (admin only)',
+    description: 'Accepts JSON or multipart/form-data. Include up to 2 images by sending files in the `images` field. When using form-data, repeat `productOptionValueIds` for each UUID.',
+  })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
   @ApiResponse({ status: 201, description: 'Variant created' })
-  @ApiResponse({ status: 400, description: 'Invalid option value IDs or duplicate combination' })
+  @ApiResponse({ status: 400, description: 'Invalid option value IDs, duplicate combination, or image limit exceeded' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
   @ApiResponse({ status: 404, description: 'Product not found' })
   @ApiResponse({ status: 409, description: 'SKU already in use or combination already exists' })
-  create(@Param('productId') productId: string, @Body() input: CreateVariantDto) {
-    return this.variantService.create(productId, input);
+  create(
+    @Param('productId') productId: string,
+    @Body() input: CreateVariantDto,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    return this.variantService.create(productId, input, files);
   }
 
   @Patch(':variantId')
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update a variant (admin only)' })
+  @UploadFiles('images', 2)
+  @ApiOperation({
+    summary: 'Update a variant (admin only)',
+    description: 'Accepts JSON or multipart/form-data. Include up to 2 images total by sending files in the `images` field.',
+  })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
   @ApiParam({ name: 'variantId', description: 'Variant UUID' })
   @ApiResponse({ status: 200, description: 'Variant updated' })
-  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiResponse({ status: 400, description: 'Invalid input or image limit exceeded' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
   @ApiResponse({ status: 404, description: 'Variant not found' })
-  @ApiResponse({ status: 409, description: 'SKU already in use' })
+  @ApiResponse({ status: 409, description: 'Name already in use' })
   update(
     @Param('productId') productId: string,
     @Param('variantId') variantId: string,
     @Body() input: UpdateVariantDto,
+    @UploadedFiles() files: Express.Multer.File[],
   ) {
-    return this.variantService.update(productId, variantId, input);
+    return this.variantService.update(productId, variantId, input, files);
   }
 
   @Patch(':variantId/stock')

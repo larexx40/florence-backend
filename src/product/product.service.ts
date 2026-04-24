@@ -11,11 +11,11 @@ import { ApiResponse, PaginatedData } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
 import { generateUniqueSlug } from 'src/common/helpers/slug.helper';
+import { generateSku } from './helpers/sku.helper';
 import { buildS3ImageKey, cleanupOrphanedS3Image, validateImageFile } from 'src/common/helpers/image.helper';
 import { uploadFileToAWSS3 } from 'src/common/helpers/s3.upload.helper';
 import { AttachImageDto } from 'src/image/dto/image.dto';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
-import { max } from 'class-validator';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -285,13 +285,15 @@ export class ProductService {
     input: CreateProductDto,
     files?: Express.Multer.File[]
   ): Promise<ApiResponse<any>> {
+    const hasVariant = input.hasVariant ?? true;
+
+    if (!hasVariant && (input.price === undefined || input.price === null)) {
+      throw new BadRequestException('price is required when product has no variants');
+    }
+
     const category = await this.prisma.category.findUnique({ where: { id: input.categoryId } });
     if (!category) throw new NotFoundException('Category not found');
 
-    if (input.discountId) {
-      const discount = await this.prisma.discount.findUnique({ where: { id: input.discountId } });
-      if (!discount) throw new NotFoundException('Discount not found');
-    }
 
     if (files && files.length > 0) {
       if (files.length > MAX_PRODUCT_IMAGES) {
@@ -304,38 +306,56 @@ export class ProductService {
       this.prisma.product.findUnique({ where: { slug: s } }).then(Boolean),
     );
 
-    const product = await this.prisma.product.create({
-      data: {
-        name: input.name,
-        slug,
-        description: input.description ?? null,
-        categoryId: input.categoryId,
-        requiresVariant: input.requiresVariant ?? true,
-        minOrderQty: input.minOrderQty ?? 1,
-        orderIncrement: input.orderIncrement ?? null,
-        prerequisiteVariantId: input.prerequisiteVariantId ?? null,
-        discountId: input.discountId ?? null,
-        directDiscountEnabled: input.directDiscountEnabled ?? false,
-        directDiscountType: input.directDiscountType ?? null,
-        directDiscountValue: input.directDiscountValue ?? null,
-      },
-      include: PRODUCT_DETAIL_INCLUDE,
+    let defaultVariantSku: string | undefined;
+    if (!hasVariant) {
+      defaultVariantSku = await this.generateDefaultVariantSku(category.name, input.name);
+    }
+
+    const product = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.product.create({
+        data: {
+          name: input.name,
+          slug,
+          description: input.description ?? null,
+          categoryId: input.categoryId,
+          requiresVariant: hasVariant,
+          minOrderQty: input.minOrderQty ?? 1,
+          orderIncrement: input.orderIncrement ?? null,
+          directDiscountEnabled: input.directDiscountEnabled ?? false,
+          directDiscountType: input.directDiscountType ?? null,
+          directDiscountValue: input.directDiscountValue ?? null,
+        },
+        include: PRODUCT_DETAIL_INCLUDE,
+      });
+
+      if (!hasVariant) {
+        await tx.productVariant.create({
+          data: {
+            productId: created.id,
+            sku: defaultVariantSku!,
+            title: 'Default',
+            price: input.price!,
+            stockQty: input.quantity ?? 0,
+          },
+        });
+      }
+
+      return created;
     });
 
-    //create images
-    let images = files ? await Promise.all(
+    const images = files ? await Promise.all(
       files.map(async (file, index) => {
         const key = buildS3ImageKey('products', file.mimetype);
         const url = await uploadFileToAWSS3(file, key, true, true); // optimize + watermark
         return this.prisma.productImage.create({
-          data: { 
+          data: {
             productId: product.id,
-            url, altText: null, 
-            position: index 
+            url, altText: null,
+            position: index
           },
         });
       }),
-    ):[];
+    ) : [];
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
     return {
@@ -343,6 +363,19 @@ export class ProductService {
       message: 'Product created successfully',
       data: { ...product, images },
     };
+  }
+
+  private async generateDefaultVariantSku(categoryName: string, productName: string): Promise<string> {
+    const base = generateSku({ categoryName, productName, options: [] });
+    const exists = await this.prisma.productVariant.findUnique({ where: { sku: base } });
+    if (!exists) return base;
+
+    for (let i = 2; i <= 99; i++) {
+      const candidate = `${base}-${i}`;
+      const found = await this.prisma.productVariant.findUnique({ where: { sku: candidate } });
+      if (!found) return candidate;
+    }
+    throw new ConflictException('Could not generate a unique SKU for this product variant');
   }
 
   async update(id: string, input: UpdateProductDto, files?: Express.Multer.File[]): Promise<ApiResponse<any>> {
@@ -397,7 +430,7 @@ export class ProductService {
         ...(input.isActive !== undefined && { isActive: input.isActive }),
         ...(input.minOrderQty !== undefined && { minOrderQty: input.minOrderQty }),
         ...(input.orderIncrement !== undefined && { orderIncrement: input.orderIncrement }),
-        ...(input.requiresVariant !== undefined && { requiresVariant: input.requiresVariant }),
+        ...(input.hasVariant !== undefined && { requiresVariant: input.hasVariant }),
         ...(input.prerequisiteVariantId !== undefined && {
           prerequisiteVariantId: input.prerequisiteVariantId,
         }),

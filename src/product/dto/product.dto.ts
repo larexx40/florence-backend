@@ -6,6 +6,7 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsNumberString,
   IsOptional,
   IsPositive,
@@ -89,23 +90,32 @@ export class CreateProductDto {
   @Min(1)
   orderIncrement?: number;
 
-  @ApiPropertyOptional({ example: 'uuid-of-variant', description: 'Variant that must be in cart before others can be added' })
-  @IsOptional()
-  @IsUUID('4')
-  prerequisiteVariantId?: string;
-
   @ApiPropertyOptional({
     example: true,
-    description: 'false = no variant selector shown; product is sold as-is with a single default variant',
+    description: 'false = product has no variants; a single default variant is created automatically using price and quantity',
   })
   @IsOptional()
   @IsBoolean()
-  requiresVariant?: boolean;
+  hasVariant?: boolean;
 
-  @ApiPropertyOptional({ example: 'uuid-of-discount' })
+  @ApiPropertyOptional({
+    example: 2500.00,
+    description: 'Required when hasVariant is false. Price of the single default variant.',
+  })
   @IsOptional()
-  @IsUUID('4')
-  discountId?: string;
+  @IsNumber({}, { message: 'price must be a number' })
+  @IsPositive({ message: 'price must be greater than 0' })
+  price?: number;
+
+  @ApiPropertyOptional({
+    example: 50,
+    description: 'Stock quantity for the default variant. Only used when hasVariant is false.',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  quantity?: number;
 
   @ApiPropertyOptional({ example: false, description: 'Enable the direct discount on this product' })
   @IsOptional()
@@ -165,7 +175,7 @@ export class UpdateProductDto {
   @ApiPropertyOptional({ example: true })
   @IsOptional()
   @IsBoolean()
-  requiresVariant?: boolean;
+  hasVariant?: boolean;
 
   @ApiPropertyOptional({ example: 'uuid-of-discount' })
   @IsOptional()

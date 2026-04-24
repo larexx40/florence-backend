@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsNumberString,
   IsOptional,
+  IsString,
   IsUUID,
   Min,
   ValidateNested,
@@ -90,16 +91,37 @@ export class CreateVariantDto {
   @Min(1)
   maxQty?: number;
 
-  @ApiProperty({
-    description: 'Array of ProductOptionValue IDs that define this variant combination. One ID per option dimension.',
+  @ApiPropertyOptional({
+    example: 'Standard',
+    description: 'Variant display name. Required when productOptionValueIds is empty — must be unique per product. Ignored when option values are provided (title is auto-generated from selected values).',
+  })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional({
+    description: 'Array of ProductOptionValue IDs that define this variant combination. Omit or pass an empty array for products with no options. When sending as multipart/form-data, repeat the field name for each UUID.',
     example: ['uuid-of-black-pov', 'uuid-of-l-pov'],
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    return Array.isArray(value) ? value : [value];
   })
   @IsArray()
   @IsUUID('4', { each: true, message: 'Each productOptionValueId must be a valid UUID' })
-  productOptionValueIds: string[];
+  productOptionValueIds?: string[];
 }
 
 export class UpdateVariantDto {
+  @ApiPropertyOptional({
+    example: 'Premium',
+    description: 'Only applicable to variants with no option values. Must be unique per product (case-insensitive).',
+  })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
   @ApiPropertyOptional({ example: 15000 })
   @IsOptional()
   @IsNumber()
@@ -145,6 +167,14 @@ export class BulkUpdateVariantItemDto {
   @ApiProperty({ example: 'uuid-of-variant', description: 'Variant UUID to update' })
   @IsUUID('4', { message: 'variantId must be a valid UUID' })
   variantId: string;
+
+  @ApiPropertyOptional({
+    example: 'Premium',
+    description: 'Only applicable to variants with no option values. Must be unique per product (case-insensitive).',
+  })
+  @IsOptional()
+  @IsString()
+  name?: string;
 
   @ApiPropertyOptional({ example: 15000 })
   @IsOptional()
