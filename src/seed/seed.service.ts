@@ -252,7 +252,7 @@ export class SeedService {
           categoryId: category.id,
           minOrderQty: entry.product.minOrderQty ?? 1,
           orderIncrement: entry.product.orderIncrement ?? undefined,
-          prerequisiteVariantId: undefined,
+          // prerequisiteVariantId: undefined,
         } satisfies CreateProductDto);
         product = created.data;
         summary.products.created += 1;
