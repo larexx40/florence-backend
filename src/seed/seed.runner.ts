@@ -1,5 +1,8 @@
 import { PrismaClient, Role } from '@prisma/client';
+import { Logger } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+
+const seedLogger = new Logger('SeedRunner');
 
 export interface SeedUserInput {
   email: string;
@@ -1590,8 +1593,8 @@ export async function runSeedCli() {
 
   try {
     const summary = await runSeed(prisma);
-    console.log('Seed complete.');
-    console.log(JSON.stringify(summary, null, 2));
+    seedLogger.log('Seed complete');
+    seedLogger.log(JSON.stringify(summary, null, 2));
   } finally {
     await prisma.$disconnect();
   }
@@ -1599,7 +1602,7 @@ export async function runSeedCli() {
 
 if (require.main === module) {
   runSeedCli().catch((error) => {
-    console.error(error);
+    seedLogger.error(error);
     process.exit(1);
   });
 }

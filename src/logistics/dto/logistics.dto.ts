@@ -126,4 +126,9 @@ export class UpdateCoverageDto {
     @IsUUID()
     @IsOptional()
     localGovernmentId?: string;
+
+    @ApiPropertyOptional({ example: true, description: 'Enable or disable this coverage area' })
+    @IsBoolean()
+    @IsOptional()
+    isActive?: boolean;
 }

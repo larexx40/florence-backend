@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { LoggerModule } from 'nestjs-pino';
+import { pinoConfig } from './logger/logger.config';
+import { GlobalHttpExceptionFilter } from './common/filters/exception.filter';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -51,6 +54,7 @@ import { UploadModule } from './upload/upload.module';
         password: process.env.REDIS_PASSWORD || undefined,
       },
     }),
+    LoggerModule.forRoot(pinoConfig),
     AppCacheModule,
     AuthModule,
     PrismaModule,
@@ -72,6 +76,7 @@ import { UploadModule } from './upload/upload.module';
   providers: [
     AppService,
     PrismaService,
+    GlobalHttpExceptionFilter,
     // API key check runs first on every request
     { provide: APP_GUARD, useClass: ApiKeyGuard },
     // rate limiting runs after API key is validated

@@ -29,12 +29,17 @@ import { AttachImageDto } from 'src/image/dto/image.dto';
 import { ProductService } from './product.service';
 import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
 import { ProductDetailResponseDto, ProductListResponseDto } from './dto/product-response.dto';
+import { VariantService } from './variant/variant.service';
+import { GlobalVariantQueryDto } from './variant/dto/variant.dto';
 
 @ApiTags('products')
 @ApiSecurity('x-api-key')
 @Controller('products')
 export class ProductController {
-  constructor(private readonly productService: ProductService) {}
+  constructor(
+    private readonly productService: ProductService,
+    private readonly variantService: VariantService,
+  ) {}
 
   // ── Public ───────────────────────────────────────────────────────────────────
 
@@ -56,6 +61,19 @@ export class ProductController {
     return this.productService.getProductConfig();
   }
   
+  @Get('variants')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(CacheInterceptor)
+  @Cacheable(300)
+  @ApiOperation({ summary: 'List all variants across all products with search, filter, and pagination (admin only)' })
+  @ApiResponse({ status: 200, description: 'Variants returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  getAllVariants(@Query() query: GlobalVariantQueryDto) {
+    return this.variantService.getAllGlobal(query);
+  }
+
   @Get(':idOrSlug')
   @UseInterceptors(CacheInterceptor)
   @Cacheable(600)
