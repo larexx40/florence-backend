@@ -23,12 +23,17 @@ async function bootstrap() {
   app.useGlobalFilters(app.get(GlobalHttpExceptionFilter));
 
   app.enableCors({
-    origin: [
-      'http://localhost:5173',
-      'http://localhost:5174',
-      process.env.ADMIN_URL,
-      process.env.CLIENT_URL,
-    ].filter(Boolean) as string[],
+    origin: (origin, callback) => {
+      const allowed = [
+        /^https?:\/\/([\w-]+\.)*everythingflorences\.com$/,
+        /^http:\/\/localhost:\d+$/,
+      ];
+      if (!origin || allowed.some((pattern) => pattern.test(origin))) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS: origin '${origin}' not allowed`));
+      }
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'Cache-Control', 'Pragma', 'Accept'],
     credentials: true,
