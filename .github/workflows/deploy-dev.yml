@@ -168,3 +168,66 @@ jobs:
 
             echo "🚀 Deploy complete"
             docker compose -f docker-compose.dev.yml ps
+
+      # ─────────────────────────────
+      # 8️⃣ Health check (poll for up to 2 min)
+      # ─────────────────────────────
+      - name: Health check
+        id: health
+        run: |
+          echo "Polling health endpoint..."
+          for i in $(seq 1 12); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://dev.api.everythingflorences.com/health)
+            if [ "$STATUS" = "200" ]; then
+              echo "result=healthy" >> $GITHUB_OUTPUT
+              echo "✅ Healthy on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS — retrying in 10s..."
+            sleep 10
+          done
+          echo "result=unhealthy" >> $GITHUB_OUTPUT
+          echo "❌ App did not become healthy after 2 minutes"
+          exit 1
+
+      # ─────────────────────────────
+      # 9️⃣ Slack notification (always runs)
+      # ─────────────────────────────
+      - name: Notify Slack
+        if: always()
+        run: |
+          DEPLOY_STATUS="${{ job.status }}"
+          HEALTH="${{ steps.health.outputs.result }}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+
+          if [ "$DEPLOY_STATUS" = "success" ] && [ "$HEALTH" = "healthy" ]; then
+            ICON="✅"
+            COLOR="good"
+            SUMMARY="Deployment succeeded — app is healthy"
+          elif [ "$DEPLOY_STATUS" = "success" ]; then
+            ICON="⚠️"
+            COLOR="warning"
+            SUMMARY="Deployment succeeded — but app failed health check"
+          else
+            ICON="❌"
+            COLOR="danger"
+            SUMMARY="Deployment failed"
+          fi
+
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"attachments\": [{
+                \"color\": \"$COLOR\",
+                \"title\": \"$ICON Dev — $SUMMARY\",
+                \"fields\": [
+                  {\"title\": \"Branch\",       \"value\": \"${{ github.ref_name }}\",       \"short\": true},
+                  {\"title\": \"Commit\",       \"value\": \"<$COMMIT_URL|$SHORT_SHA>\",     \"short\": true},
+                  {\"title\": \"Triggered by\", \"value\": \"${{ github.actor }}\",          \"short\": true},
+                  {\"title\": \"Health\",       \"value\": \"${HEALTH:-unknown}\",           \"short\": true}
+                ],
+                \"footer\": \"florence-backend · dev\",
+                \"ts\": $(date +%s)
+              }]
+            }"

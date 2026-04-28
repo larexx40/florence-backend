@@ -32,6 +32,8 @@ services:
     container_name: florence-app-dev
     restart: unless-stopped
     env_file: .env
+    environment:
+      NODE_ENV: staging
 
     ports:
       - "3000:3000"
