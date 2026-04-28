@@ -2,12 +2,20 @@ import { Request } from 'express';
 
 const NAMESPACE = 'everything-florence';
 
+// Strip the global prefix and optional URI version segment so cache keys
+// are stable regardless of routing configuration (e.g. /api/v1/products → /products).
+const PATH_PREFIX_RE = /^\/api(?:\/v\d+)?/;
+
+function normalisePath(path: string): string {
+    return path.replace(PATH_PREFIX_RE, '') || '/';
+}
+
 /**
  * Builds a canonical, deterministic cache key.
  *
  * Format:
- *   everything-florence:{path}:{sorted_query_string}
- *   everything-florence:{path}:user:{userId}:{sorted_query_string}
+ *   everything-florence:{logical_path}:{sorted_query_string}
+ *   everything-florence:{logical_path}:user:{userId}:{sorted_query_string}
  *
  * Query params are sorted alphabetically so `?page=1&limit=20` and
  * `?limit=20&page=1` always resolve to the same key.
@@ -19,7 +27,7 @@ export function buildCacheKey(req: Request, userId?: string): string {
         .map((k) => `${k}=${req.query[k]}`)
         .join('&');
 
-    const parts = [NAMESPACE, req.path];
+    const parts = [NAMESPACE, normalisePath(req.path)];
     if (userId) parts.push(`user:${userId}`);
     if (sortedQuery) parts.push(sortedQuery);
 

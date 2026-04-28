@@ -1,13 +1,18 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { Logger as NestLogger, ValidationPipe } from '@nestjs/common';
+import { Logger as NestLogger, ValidationPipe, VERSION_NEUTRAL, VersioningType } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
 import { GlobalHttpExceptionFilter } from './common/filters/exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
+  app.setGlobalPrefix('api');
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: VERSION_NEUTRAL,
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
