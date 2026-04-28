@@ -1,8 +1,8 @@
 import { Role } from '@prisma/client';
 import {
-  IsDefined,
   IsEmail,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -29,16 +29,23 @@ export class ChangeUserRole {
   role: Role;
 }
 
-export class AddAdminDto {
-  @ApiProperty({ example: 'Jane' })
-  @IsNotEmpty({ message: 'Firstname required' })
-  @IsString({ message: 'Firstname must be a string' })
-  firstName: string;
+const CREATABLE_STAFF_ROLES = [Role.ADMIN, Role.SUPPORT, Role.LOGISTICS];
 
-  @ApiProperty({ example: 'Doe' })
-  @IsNotEmpty({ message: 'Lastname required' })
+export class CreateStaffDto {
+  @ApiPropertyOptional({ example: 'Jane' })
+  @IsOptional()
+  @IsString({ message: 'Firstname must be a string' })
+  firstName?: string;
+
+  @ApiPropertyOptional({ example: 'Doe' })
+  @IsOptional()
   @IsString({ message: 'Lastname must be a string' })
-  lastName: string;
+  lastName?: string;
+
+  @ApiPropertyOptional({ example: '+2348012345678' })
+  @IsOptional()
+  @IsString({ message: 'Phone number must be a string' })
+  phone?: string;
 
   @ApiProperty({ example: 'admin@example.com' })
   @IsNotEmpty({ message: 'Email is required' })
@@ -46,6 +53,12 @@ export class AddAdminDto {
   @IsEmail({}, { message: 'Invalid email format' })
   @Transform(({ value }: TransformFnParams) => value?.trim().toLowerCase())
   email: string;
+
+  @ApiProperty({ enum: CREATABLE_STAFF_ROLES, example: Role.SUPPORT })
+  @IsNotEmpty({ message: 'Role is required' })
+  @IsEnum(Role, { message: 'Invalid role' })
+  @IsIn(CREATABLE_STAFF_ROLES, { message: 'Role must be ADMIN, SUPPORT, or LOGISTICS' })
+  role: Role;
 }
 
 export class UpdateNewAdminProfileDto {
@@ -56,13 +69,11 @@ export class UpdateNewAdminProfileDto {
 
   @ApiPropertyOptional({ example: 'Jane' })
   @IsOptional()
-  @IsDefined({ message: 'Firstname is required' })
   @IsString({ message: 'Firstname must be a string' })
   firstName?: string;
 
   @ApiPropertyOptional({ example: 'Doe' })
   @IsOptional()
-  @IsDefined({ message: 'Lastname is required' })
   @IsString({ message: 'Lastname must be a string' })
   lastName?: string;
 

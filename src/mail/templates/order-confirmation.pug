@@ -1,0 +1,42 @@
+extends ./_base.pug
+
+block body
+  p Hi #{firstName},
+  p Your order has been received and confirmed.
+  .panel
+    p
+      strong Order number:
+      |  #{orderNumber}
+    p
+      strong Payment method:
+      |  #{paymentMethod}
+  if items && items.length
+    ul.list
+      each item in items
+        li
+          strong #{item.name}
+          br
+          | Quantity: #{item.quantity}
+          br
+          | Unit price: N#{item.unitPrice.toLocaleString()}
+          br
+          | Line total: N#{item.lineTotal.toLocaleString()}
+  .panel
+    p
+      strong Subtotal:
+      |  N#{subtotal.toLocaleString()}
+    p
+      strong Discount:
+      |  N#{discount.toLocaleString()}
+    p
+      strong Shipping fee:
+      |  N#{shippingFee.toLocaleString()}
+    p
+      strong Total:
+      |  N#{total.toLocaleString()}
+  if paystackUrl
+    p Your payment is pending.
+    .button-wrap
+      a.button(href=paystackUrl) Complete Payment
+  else
+    p We'll keep you updated as your order moves forward.
