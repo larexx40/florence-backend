@@ -1,16 +1,21 @@
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsDecimal,
+  IsEnum,
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsNumberString,
   IsOptional,
+  IsPositive,
   IsString,
   IsUUID,
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DirectDiscountType } from '@prisma/client';
 
 export class ProductQueryDto {
   @ApiPropertyOptional({ example: 'bag' })
@@ -63,11 +68,6 @@ export class CreateProductDto {
   @IsString()
   name: string;
 
-  @ApiProperty({ example: 'bflo-226' })
-  @IsNotEmpty({ message: 'Slug is required' })
-  @IsString()
-  slug: string;
-
   @ApiPropertyOptional({ example: 'Premium quality bag in multiple colours' })
   @IsOptional()
   @IsString()
@@ -80,25 +80,65 @@ export class CreateProductDto {
 
   @ApiPropertyOptional({ example: 1, minimum: 1, description: 'Minimum units per order' })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseInt(value, 10) : value))
   @IsInt()
   @Min(1)
   minOrderQty?: number;
 
   @ApiPropertyOptional({ example: 6, description: 'Quantity must be a multiple of this value' })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseInt(value, 10) : value))
   @IsInt()
   @Min(1)
   orderIncrement?: number;
 
-  @ApiPropertyOptional({ example: 'uuid-of-variant', description: 'Variant that must be in cart before others can be added' })
+  @ApiPropertyOptional({
+    example: true,
+    description: 'false = product has no variants; a single default variant is created automatically using price and quantity',
+  })
   @IsOptional()
-  @IsUUID('4')
-  prerequisiteVariantId?: string;
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  hasVariant?: boolean;
 
-  @ApiPropertyOptional({ example: 'uuid-of-discount' })
+  @ApiPropertyOptional({
+    example: 2500.00,
+    description: 'Required when hasVariant is false. Price of the single default variant.',
+  })
   @IsOptional()
-  @IsUUID('4')
-  discountId?: string;
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseFloat(value) : value))
+  @IsNumber({}, { message: 'price must be a number' })
+  @IsPositive({ message: 'price must be greater than 0' })
+  price?: number;
+
+  @ApiPropertyOptional({
+    example: 50,
+    description: 'Stock quantity for the default variant. Only used when hasVariant is false.',
+    minimum: 0,
+  })
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseInt(value, 10) : value))
+  @IsInt()
+  @Min(0)
+  quantity?: number;
+
+  @ApiPropertyOptional({ example: false, description: 'Enable the direct discount on this product' })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  directDiscountEnabled?: boolean;
+
+  @ApiPropertyOptional({ enum: DirectDiscountType, example: DirectDiscountType.PERCENTAGE })
+  @IsOptional()
+  @IsEnum(DirectDiscountType)
+  directDiscountType?: DirectDiscountType;
+
+  @ApiPropertyOptional({ example: '15.00', description: 'Percentage (0–100) or absolute amount depending on directDiscountType' })
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseFloat(value) : value))
+  @IsNumber({}, { message: 'Discount Value must be a number' })
+  @IsPositive()
+  directDiscountValue?: string;
 }
 
 export class UpdateProductDto {
@@ -106,11 +146,6 @@ export class UpdateProductDto {
   @IsOptional()
   @IsString()
   name?: string;
-
-  @ApiPropertyOptional({ example: 'bflo-226-updated' })
-  @IsOptional()
-  @IsString()
-  slug?: string;
 
   @ApiPropertyOptional({ example: 'Updated description' })
   @IsOptional()
@@ -124,17 +159,20 @@ export class UpdateProductDto {
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   isActive?: boolean;
 
   @ApiPropertyOptional({ example: 1 })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseInt(value, 10) : value))
   @IsInt()
   @Min(1)
   minOrderQty?: number;
 
   @ApiPropertyOptional({ example: 6 })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseInt(value, 10) : value))
   @IsInt()
   @Min(1)
   orderIncrement?: number;
@@ -144,8 +182,32 @@ export class UpdateProductDto {
   @IsUUID('4')
   prerequisiteVariantId?: string;
 
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  hasVariant?: boolean;
+
   @ApiPropertyOptional({ example: 'uuid-of-discount' })
   @IsOptional()
   @IsUUID('4')
   discountId?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  directDiscountEnabled?: boolean;
+
+  @ApiPropertyOptional({ enum: DirectDiscountType, example: DirectDiscountType.PERCENTAGE })
+  @IsOptional()
+  @IsEnum(DirectDiscountType)
+  directDiscountType?: DirectDiscountType;
+
+  @ApiPropertyOptional({ example: '15.00' })
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseFloat(value) : value))
+  @IsDecimal()
+  @IsPositive()
+  directDiscountValue?: string;
 }

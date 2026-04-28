@@ -3,12 +3,13 @@ import {
     Injectable,
     NotFoundException,
 } from '@nestjs/common';
+import { Address } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
 import { buildInvalidationPrefix } from 'src/cache/cache-key.util';
-import { Address } from '@prisma/client';
 import { CreateShippingAddressDto, UpdateShippingAddressDto } from './dto/shipping-address.dto';
+import { ShippingAddressResponseDto } from './dto/response.dto';
 
 @Injectable()
 export class ShippingAddressService {
@@ -20,44 +21,57 @@ export class ShippingAddressService {
     // ── Helpers ──────────────────────────────────────────────────────────────────
 
     private async findOrThrow(id: string, userId: string): Promise<Address> {
-        const shippingAddress = await this.prisma.address.findUnique({ where: { id } });
-        if (!shippingAddress) throw new NotFoundException('Shipping address not found');
-        if (shippingAddress.userId !== userId) throw new ForbiddenException('Access denied');
-        return shippingAddress;
+        const address = await this.prisma.address.findUnique({ where: { id } });
+        if (!address) throw new NotFoundException('Shipping address not found');
+        if (address.userId !== userId) throw new ForbiddenException('Access denied');
+        return address;
     }
 
     // ── Queries ──────────────────────────────────────────────────────────────────
 
-    async getUserShippingAddresses(userId: string): Promise<ApiResponse<Address[]>> {
-        const shippingAddresses = await this.prisma.address.findMany({
+    async getUserShippingAddresses(userId: string): Promise<ApiResponse<ShippingAddressResponseDto[]>> {
+        const addresses = await this.prisma.address.findMany({
             where: { userId },
             orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
         });
-        return { status: true, message: 'Shipping addresses fetched successfully', data: shippingAddresses };
+        return { status: true, message: 'Shipping addresses fetched successfully', data: addresses };
     }
 
-    async getShippingAddress(userId: string, id: string): Promise<ApiResponse<Address>> {
-        const shippingAddress = await this.findOrThrow(id, userId);
-        return { status: true, message: 'Shipping address fetched successfully', data: shippingAddress };
+    async getShippingAddress(userId: string, id: string): Promise<ApiResponse<ShippingAddressResponseDto>> {
+        const address = await this.findOrThrow(id, userId);
+        return { status: true, message: 'Shipping address fetched successfully', data: address };
+    }
+
+    // Looks up a user by email; returns an empty address list when the email is not found
+    async getShippingAddressByUserEmail(email: string): Promise<ApiResponse<ShippingAddressResponseDto[]>> {
+        const user = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
+
+        if (!user) {
+            return { status: true, message: 'No user found for this email', data: [] };
+        }
+
+        const addresses = await this.prisma.address.findMany({
+            where: { userId: user.id },
+            orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
+        });
+
+        return { status: true, message: 'Shipping addresses fetched successfully', data: addresses };
     }
 
     // ── Mutations ─────────────────────────────────────────────────────────────────
 
-    async createShippingAddress(userId: string, dto: CreateShippingAddressDto): Promise<ApiResponse<Address>> {
+    async createShippingAddress(userId: string, dto: CreateShippingAddressDto): Promise<ApiResponse<ShippingAddressResponseDto>> {
         if (dto.cityId) {
             const city = await this.prisma.city.findUnique({ where: { id: dto.cityId } });
             if (!city) throw new NotFoundException('City not found');
         }
 
-        const makeDefault = dto.isDefault ?? false;
-
-        const shippingAddress = await this.prisma.$transaction(async (tx) => {
-            if (makeDefault) {
-                await tx.address.updateMany({
-                    where: { userId, isDefault: true },
-                    data: { isDefault: false },
-                });
-            }
+        // new addresses are always the default — demote any existing default first
+        const address = await this.prisma.$transaction(async (tx) => {
+            await tx.address.updateMany({
+                where: { userId, isDefault: true },
+                data: { isDefault: false },
+            });
 
             return tx.address.create({
                 data: {
@@ -71,16 +85,16 @@ export class ShippingAddressService {
                     cityId: dto.cityId ?? null,
                     country: dto.country ?? 'Nigeria',
                     postalCode: dto.postalCode ?? null,
-                    isDefault: makeDefault,
+                    isDefault: true,
                 },
             });
         });
 
         await this.cache.invalidateByPrefix(buildInvalidationPrefix('/shipping-addresses', userId));
-        return { status: true, message: 'Shipping address added successfully', data: shippingAddress };
+        return { status: true, message: 'Shipping address added successfully', data: address };
     }
 
-    async updateShippingAddress(userId: string, id: string, dto: UpdateShippingAddressDto): Promise<ApiResponse<Address>> {
+    async updateShippingAddress(userId: string, id: string, dto: UpdateShippingAddressDto): Promise<ApiResponse<ShippingAddressResponseDto>> {
         await this.findOrThrow(id, userId);
 
         if (dto.cityId) {
@@ -108,12 +122,12 @@ export class ShippingAddressService {
     }
 
     async deleteShippingAddress(userId: string, id: string): Promise<ApiResponse<null>> {
-        const shippingAddress = await this.findOrThrow(id, userId);
+        const address = await this.findOrThrow(id, userId);
 
         await this.prisma.address.delete({ where: { id } });
 
-        // if the deleted address was default, promote the most recent remaining address
-        if (shippingAddress.isDefault) {
+        // if the deleted address was default, promote the most recent remaining one
+        if (address.isDefault) {
             const next = await this.prisma.address.findFirst({
                 where: { userId },
                 orderBy: { id: 'asc' },
@@ -127,10 +141,10 @@ export class ShippingAddressService {
         return { status: true, message: 'Shipping address deleted successfully', data: null };
     }
 
-    async setDefaultShippingAddress(userId: string, id: string): Promise<ApiResponse<Address>> {
+    async setDefaultShippingAddress(userId: string, id: string): Promise<ApiResponse<ShippingAddressResponseDto>> {
         await this.findOrThrow(id, userId);
 
-        const shippingAddress = await this.prisma.$transaction(async (tx) => {
+        const address = await this.prisma.$transaction(async (tx) => {
             await tx.address.updateMany({
                 where: { userId, isDefault: true },
                 data: { isDefault: false },
@@ -142,6 +156,6 @@ export class ShippingAddressService {
         });
 
         await this.cache.invalidateByPrefix(buildInvalidationPrefix('/shipping-addresses', userId));
-        return { status: true, message: 'Default shipping address updated successfully', data: shippingAddress };
+        return { status: true, message: 'Default shipping address updated successfully', data: address };
     }
 }

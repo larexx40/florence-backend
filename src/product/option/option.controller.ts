@@ -10,125 +10,190 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiExtraModels,
   ApiOperation,
   ApiParam,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
 import { OptionService } from './option.service';
 import {
-  AddOptionValueDto,
-  AddProductOptionDto,
-  UpdateOptionValueDto,
-  UpdateProductOptionDto,
+  BulkCreateOptionsDto,
+  CreateProductOptionDto,
+  CreateProductOptionValueDto,
+  ProductOptionResponseDto,
+  ProductOptionValueResponseDto,
+  UpdateProductOptionValueDto,
 } from './dto/option.dto';
 
 @ApiTags('product options')
+@ApiSecurity('x-api-key')
 @ApiBearerAuth()
 @UseGuards(AuthGuard, AdminGuard)
+@ApiExtraModels(ProductOptionResponseDto, ProductOptionValueResponseDto)
 @Controller('products/:productId/options')
 export class OptionController {
   constructor(private readonly optionService: OptionService) {}
 
-  // ── Product options ──────────────────────────────────────────────────────────
+  // ── Options ──────────────────────────────────────────────────────────────────
 
   @Get()
-  @ApiOperation({ summary: 'List all options for a product (admin only)' })
+  @ApiOperation({ summary: 'List options (with values) declared for a product (admin only)' })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
-  @ApiResponse({ status: 200, description: 'Options returned' })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      properties: {
+        status: { type: 'boolean' },
+        message: { type: 'string' },
+        data: { type: 'array', items: { $ref: getSchemaPath(ProductOptionResponseDto) } },
+      },
+    },
+  })
   @ApiResponse({ status: 404, description: 'Product not found' })
   getOptions(@Param('productId') productId: string) {
-    return this.optionService.getOptions(productId);
+    return this.optionService.getProductOptions(productId);
+  }
+
+  @Post('bulk')
+  @ApiOperation({
+    summary: 'Add multiple options with their values to a product in one atomic call (admin only)',
+    description: 'All options and values are created in a single transaction — if any item fails, nothing is saved.',
+  })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiResponse({
+    status: 201,
+    schema: {
+      properties: {
+        status: { type: 'boolean' },
+        message: { type: 'string' },
+        data: { type: 'array', items: { $ref: getSchemaPath(ProductOptionResponseDto) } },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Duplicate option type or duplicate value within an option' })
+  @ApiResponse({ status: 404, description: 'Product not found or category option not in this product\'s category' })
+  @ApiResponse({ status: 409, description: 'One or more option types already added to this product' })
+  addBulkOptions(
+    @Param('productId') productId: string,
+    @Body() input: BulkCreateOptionsDto,
+  ) {
+    return this.optionService.addBulkOptions(productId, input);
   }
 
   @Post()
-  @ApiOperation({ summary: 'Add a global option to a product (admin only)' })
+  @ApiOperation({ summary: 'Add a category option type to a product (admin only)' })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
-  @ApiResponse({ status: 201, description: 'Option added' })
+  @ApiResponse({
+    status: 201,
+    schema: {
+      properties: {
+        status: { type: 'boolean' },
+        message: { type: 'string' },
+        data: { $ref: getSchemaPath(ProductOptionResponseDto) },
+      },
+    },
+  })
   @ApiResponse({ status: 400, description: 'Invalid input' })
-  @ApiResponse({ status: 404, description: 'Product not found' })
+  @ApiResponse({ status: 404, description: 'Product or category option not found' })
   @ApiResponse({ status: 409, description: 'Option already added to this product' })
-  addOption(@Param('productId') productId: string, @Body() input: AddProductOptionDto) {
+  addOption(
+    @Param('productId') productId: string,
+    @Body() input: CreateProductOptionDto,
+  ) {
     return this.optionService.addOption(productId, input);
   }
 
-  @Patch(':productOptionId')
-  @ApiOperation({ summary: 'Update option position on a product (admin only)' })
+  @Delete(':optionId')
+  @ApiOperation({ summary: 'Remove an option and all its values from a product (admin only)' })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
-  @ApiParam({ name: 'productOptionId', description: 'ProductOption UUID' })
-  @ApiResponse({ status: 200, description: 'Option updated' })
-  @ApiResponse({ status: 404, description: 'Option not found on this product' })
-  updateOption(
-    @Param('productId') productId: string,
-    @Param('productOptionId') productOptionId: string,
-    @Body() input: UpdateProductOptionDto,
-  ) {
-    return this.optionService.updateOption(productId, productOptionId, input);
-  }
-
-  @Delete(':productOptionId')
-  @ApiOperation({ summary: 'Remove an option from a product (admin only)' })
-  @ApiParam({ name: 'productId', description: 'Product UUID' })
-  @ApiParam({ name: 'productOptionId', description: 'ProductOption UUID' })
+  @ApiParam({ name: 'optionId', description: 'ProductOption UUID' })
   @ApiResponse({ status: 200, description: 'Option removed' })
-  @ApiResponse({ status: 400, description: 'Variants are using this option — delete them first' })
-  @ApiResponse({ status: 404, description: 'Option not found on this product' })
+  @ApiResponse({ status: 400, description: 'Option values are in use by variants' })
+  @ApiResponse({ status: 404, description: 'Product or option not found' })
   removeOption(
     @Param('productId') productId: string,
-    @Param('productOptionId') productOptionId: string,
+    @Param('optionId') optionId: string,
   ) {
-    return this.optionService.removeOption(productId, productOptionId);
+    return this.optionService.removeOption(productId, optionId);
   }
 
-  // ── Option values ────────────────────────────────────────────────────────────
+  // ── Option values ─────────────────────────────────────────────────────────────
 
-  @Post(':productOptionId/values')
+  @Post(':optionId/values')
   @ApiOperation({ summary: 'Add a value to a product option (admin only)' })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
-  @ApiParam({ name: 'productOptionId', description: 'ProductOption UUID' })
-  @ApiResponse({ status: 201, description: 'Value added' })
+  @ApiParam({ name: 'optionId', description: 'ProductOption UUID' })
+  @ApiResponse({
+    status: 201,
+    schema: {
+      properties: {
+        status: { type: 'boolean' },
+        message: { type: 'string' },
+        data: { $ref: getSchemaPath(ProductOptionValueResponseDto) },
+      },
+    },
+  })
   @ApiResponse({ status: 400, description: 'Invalid input' })
   @ApiResponse({ status: 404, description: 'Product or option not found' })
-  @ApiResponse({ status: 409, description: 'Value already exists for this option' })
+  @ApiResponse({ status: 409, description: 'Value already exists on this option' })
   addValue(
     @Param('productId') productId: string,
-    @Param('productOptionId') productOptionId: string,
-    @Body() input: AddOptionValueDto,
+    @Param('optionId') optionId: string,
+    @Body() input: CreateProductOptionValueDto,
   ) {
-    return this.optionService.addValue(productId, productOptionId, input);
+    return this.optionService.addValue(productId, optionId, input);
   }
 
-  @Patch(':productOptionId/values/:valueId')
-  @ApiOperation({ summary: 'Update an option value (admin only)' })
+  @Patch(':optionId/values/:valueId')
+  @ApiOperation({ summary: 'Update a product option value (admin only)' })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
-  @ApiParam({ name: 'productOptionId', description: 'ProductOption UUID' })
-  @ApiParam({ name: 'valueId', description: 'OptionValue UUID' })
+  @ApiParam({ name: 'optionId', description: 'ProductOption UUID' })
+  @ApiParam({ name: 'valueId', description: 'ProductOptionValue UUID' })
   @ApiResponse({ status: 200, description: 'Value updated' })
-  @ApiResponse({ status: 404, description: 'Value not found' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  @ApiResponse({ status: 409, description: 'Value already exists on this option' })
   updateValue(
     @Param('productId') productId: string,
-    @Param('productOptionId') productOptionId: string,
+    @Param('optionId') optionId: string,
     @Param('valueId') valueId: string,
-    @Body() input: UpdateOptionValueDto,
+    @Body() input: UpdateProductOptionValueDto,
   ) {
-    return this.optionService.updateValue(productId, productOptionId, valueId, input);
+    return this.optionService.updateValue(productId, optionId, valueId, input);
   }
 
-  @Delete(':productOptionId/values/:valueId')
-  @ApiOperation({ summary: 'Delete an option value (admin only)' })
+  @Patch(':optionId/values/:valueId/toggle')
+  @ApiOperation({ summary: 'Enable or disable a product option value (admin only)' })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
-  @ApiParam({ name: 'productOptionId', description: 'ProductOption UUID' })
-  @ApiParam({ name: 'valueId', description: 'OptionValue UUID' })
-  @ApiResponse({ status: 200, description: 'Value deleted' })
-  @ApiResponse({ status: 400, description: 'A variant is using this value — delete the variant first' })
-  @ApiResponse({ status: 404, description: 'Value not found' })
-  removeValue(
+  @ApiParam({ name: 'optionId', description: 'ProductOption UUID' })
+  @ApiParam({ name: 'valueId', description: 'ProductOptionValue UUID' })
+  @ApiResponse({ status: 200, description: 'Value enabled or disabled' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  toggleValueStatus(
     @Param('productId') productId: string,
-    @Param('productOptionId') productOptionId: string,
+    @Param('optionId') optionId: string,
     @Param('valueId') valueId: string,
   ) {
-    return this.optionService.removeValue(productId, productOptionId, valueId);
+    return this.optionService.toggleValueStatus(productId, optionId, valueId);
+  }
+
+  @Delete(':optionId/values/:valueId')
+  @ApiOperation({ summary: 'Soft-delete a product option value (admin only)' })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiParam({ name: 'optionId', description: 'ProductOption UUID' })
+  @ApiParam({ name: 'valueId', description: 'ProductOptionValue UUID' })
+  @ApiResponse({ status: 200, description: 'Value deleted' })
+  @ApiResponse({ status: 400, description: 'Value is in use by a variant' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  removeValue(
+    @Param('productId') productId: string,
+    @Param('optionId') optionId: string,
+    @Param('valueId') valueId: string,
+  ) {
+    return this.optionService.removeValue(productId, optionId, valueId);
   }
 }

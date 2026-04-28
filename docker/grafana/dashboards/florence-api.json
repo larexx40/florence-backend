@@ -1,0 +1,115 @@
+{
+  "title": "Florence API — Logs",
+  "uid": "florence-api-logs",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Log Volume by Level",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+      "targets": [
+        {
+          "expr": "sum by (level) (rate({service=\"florence-app\"}[1m]))",
+          "legendFormat": "{{level}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Error Rate (last 5m)",
+      "type": "stat",
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "thresholds": {
+          "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 1 },
+            { "color": "red", "value": 10 }
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({service=\"florence-app\", level=\"error\"}[5m]))",
+          "legendFormat": "Errors",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "5xx Responses (last 5m)",
+      "type": "stat",
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "thresholds": {
+          "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 1 }
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({service=\"florence-app\"} | json | statusCode >= 500 [5m]))",
+          "legendFormat": "5xx",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Error Logs",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 7 },
+      "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+      "options": { "dedupStrategy": "signature", "enableLogDetails": true },
+      "targets": [
+        {
+          "expr": "{service=\"florence-app\", level=\"error\"}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Slow Requests (>500ms)",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 17 },
+      "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+      "options": { "dedupStrategy": "none", "enableLogDetails": true },
+      "targets": [
+        {
+          "expr": "{service=\"florence-app\"} | json | responseTime > 500",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "All Request Logs",
+      "type": "logs",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 27 },
+      "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+      "options": { "dedupStrategy": "none", "enableLogDetails": true, "wrapLogMessage": true },
+      "targets": [
+        {
+          "expr": "{service=\"florence-app\"} | json | line_format \"[{{.level}}] {{.method}} {{.url}} → {{.statusCode}} ({{.responseTime}}ms) reqId={{.reqId}}\"",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

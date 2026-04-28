@@ -7,17 +7,26 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse } from 'src/common/types';
 import {
-  AddOptionValueDto,
-  AddProductOptionDto,
-  UpdateOptionValueDto,
-  UpdateProductOptionDto,
+  BulkCreateOptionsDto,
+  CreateProductOptionDto,
+  CreateProductOptionValueDto,
+  ProductOptionResponseDto,
+  ProductOptionValueResponseDto,
+  UpdateProductOptionValueDto,
 } from './dto/option.dto';
+
+// ── Shared include ───────────────────────────────────────────────────────────
+
+const OPTION_INCLUDE = {
+  categoryOption: { select: { id: true, name: true } },
+  values: { where: { isDeleted: false }, orderBy: { createdAt: 'asc' as const } },
+} as const;
 
 @Injectable()
 export class OptionService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // ── Helpers ─────────────────────────────────────────────────────────────────
+  // ── Helpers ──────────────────────────────────────────────────────────────────
 
   private async findProductOrThrow(productId: string) {
     const product = await this.prisma.product.findUnique({ where: { id: productId } });
@@ -25,203 +34,253 @@ export class OptionService {
     return product;
   }
 
-  private async findProductOptionOrThrow(productId: string, productOptionId: string) {
-    const productOption = await this.prisma.productOption.findFirst({
-      where: { id: productOptionId, productId },
+  private async findOptionOrThrow(productId: string, optionId: string) {
+    const option = await this.prisma.productOption.findFirst({
+      where: { id: optionId, productId },
     });
-    if (!productOption) throw new NotFoundException('Option not found on this product');
-    return productOption;
+    if (!option) throw new NotFoundException('Option not found on this product');
+    return option;
+  }
+
+  private async findValueOrThrow(optionId: string, valueId: string) {
+    const value = await this.prisma.productOptionValue.findFirst({
+      where: { id: valueId, productOptionId: optionId, isDeleted: false },
+    });
+    if (!value) throw new NotFoundException('Option value not found');
+    return value;
   }
 
   // ── Product options ──────────────────────────────────────────────────────────
 
-  async getOptions(productId: string): Promise<ApiResponse<any[]>> {
+  async getProductOptions(productId: string): Promise<ApiResponse<ProductOptionResponseDto[]>> {
     await this.findProductOrThrow(productId);
 
     const options = await this.prisma.productOption.findMany({
       where: { productId },
-      orderBy: { position: 'asc' },
-      include: {
-        option: true,
-        values: { orderBy: { position: 'asc' } },
-      },
+      orderBy: { createdAt: 'asc' },
+      include: OPTION_INCLUDE,
     });
 
-    return {
-      status: true,
-      message: 'Product options fetched successfully',
-      data: options,
-    };
+    return { status: true, message: 'Product options fetched successfully', data: options as any };
   }
 
-  async addOption(productId: string, input: AddProductOptionDto): Promise<ApiResponse<any>> {
-    await this.findProductOrThrow(productId);
+  async addOption(
+    productId: string,
+    input: CreateProductOptionDto,
+  ): Promise<ApiResponse<ProductOptionResponseDto>> {
+    const product = await this.findProductOrThrow(productId);
 
-    // find-or-create the global Option by name
-    const option = await this.prisma.option.upsert({
-      where: { name: input.name },
-      update: {},
-      create: {
-        name: input.name,
-        displayName: input.displayName ?? input.name,
-      },
+    const categoryOption = await this.prisma.categoryOption.findFirst({
+      where: { id: input.categoryOptionId, categoryId: product.categoryId },
     });
-
-    const alreadyLinked = await this.prisma.productOption.findFirst({
-      where: { productId, optionId: option.id },
-    });
-    if (alreadyLinked) {
-      throw new ConflictException(`Option "${input.name}" is already added to this product`);
+    if (!categoryOption) {
+      throw new NotFoundException("Category option not found in this product's category");
     }
 
-    const productOption = await this.prisma.productOption.create({
-      data: {
-        productId,
-        optionId: option.id,
-        position: input.position ?? 0,
-      },
-      include: { option: true, values: true },
+    const conflict = await this.prisma.productOption.findUnique({
+      where: { productId_categoryOptionId: { productId, categoryOptionId: input.categoryOptionId } },
+    });
+    if (conflict) {
+      throw new ConflictException(`Option "${categoryOption.name}" is already added to this product`);
+    }
+
+    const option = await this.prisma.productOption.create({
+      data: { productId, categoryOptionId: input.categoryOptionId },
+      include: OPTION_INCLUDE,
     });
 
-    return {
-      status: true,
-      message: 'Option added to product successfully',
-      data: productOption,
-    };
+    return { status: true, message: 'Option added to product successfully', data: option as any };
   }
 
-  async updateOption(
+  async addBulkOptions(
     productId: string,
-    productOptionId: string,
-    input: UpdateProductOptionDto,
-  ): Promise<ApiResponse<any>> {
-    await this.findProductOptionOrThrow(productId, productOptionId);
+    input: BulkCreateOptionsDto,
+  ): Promise<ApiResponse<ProductOptionResponseDto[]>> {
+    const product = await this.findProductOrThrow(productId);
 
-    const updated = await this.prisma.productOption.update({
-      where: { id: productOptionId },
-      data: {
-        ...(input.position !== undefined && { position: input.position }),
-      },
-      include: { option: true, values: true },
+    const categoryOptionIds = input.options.map((o) => o.categoryOptionId);
+
+    // Reject duplicate option types in the same request
+    if (new Set(categoryOptionIds).size !== categoryOptionIds.length) {
+      throw new BadRequestException(
+        'Duplicate categoryOptionId in request — each option type can only appear once',
+      );
+    }
+
+    // All categoryOptionIds must belong to this product's category
+    const categoryOptions = await this.prisma.categoryOption.findMany({
+      where: { id: { in: categoryOptionIds }, categoryId: product.categoryId },
     });
 
-    return {
-      status: true,
-      message: 'Option updated successfully',
-      data: updated,
-    };
-  }
+    if (categoryOptions.length !== categoryOptionIds.length) {
+      const foundIds = new Set(categoryOptions.map((co) => co.id));
+      const missing = categoryOptionIds.filter((id) => !foundIds.has(id));
+      throw new NotFoundException(
+        `Category option(s) not found in this product's category: ${missing.join(', ')}`,
+      );
+    }
 
-  async removeOption(productId: string, productOptionId: string): Promise<ApiResponse<null>> {
-    await this.findProductOptionOrThrow(productId, productOptionId);
+    // None of these option types may already exist on this product
+    const existing = await this.prisma.productOption.findMany({
+      where: { productId, categoryOptionId: { in: categoryOptionIds } },
+      include: { categoryOption: { select: { name: true } } },
+    });
+    if (existing.length > 0) {
+      const names = existing.map((e) => e.categoryOption.name).join(', ');
+      throw new ConflictException(`Option(s) already added to this product: ${names}`);
+    }
 
-    // guard: check no variants are using values from this option
-    const valueIds = await this.prisma.optionValue
-      .findMany({ where: { productOptionId }, select: { id: true } })
-      .then((rows) => rows.map((r) => r.id));
-
-    if (valueIds.length) {
-      const usedByVariant = await this.prisma.variantOptionValue.findFirst({
-        where: { optionValueId: { in: valueIds } },
-      });
-      if (usedByVariant) {
-        throw new BadRequestException(
-          'Cannot remove option — existing variants are using its values. Delete those variants first.',
-        );
+    // Reject duplicate values within each option
+    for (const optionInput of input.options) {
+      const seen = new Set<string>();
+      for (const v of optionInput.values) {
+        const key = v.value.toLowerCase();
+        if (seen.has(key)) {
+          const catOpt = categoryOptions.find((co) => co.id === optionInput.categoryOptionId);
+          throw new BadRequestException(
+            `Duplicate value "${v.value}" in option "${catOpt?.name}" — each value must be unique`,
+          );
+        }
+        seen.add(key);
       }
     }
 
-    await this.prisma.$transaction([
-      this.prisma.optionValue.deleteMany({ where: { productOptionId } }),
-      this.prisma.productOption.delete({ where: { id: productOptionId } }),
-    ]);
+    const created = await this.prisma.$transaction(async (tx) => {
+      const results: any[] = [];
 
+      for (const optionInput of input.options) {
+        const productOption = await tx.productOption.create({
+          data: {
+            productId,
+            categoryOptionId: optionInput.categoryOptionId,
+            values: {
+              create: optionInput.values.map((v) => ({
+                value: v.value,
+                colorHex: v.colorHex ?? null,
+              })),
+            },
+          },
+          include: OPTION_INCLUDE,
+        });
+
+        results.push(productOption);
+      }
+
+      return results;
+    });
+
+    return { status: true, message: 'Product options added successfully', data: created };
+  }
+
+  async removeOption(productId: string, optionId: string): Promise<ApiResponse<null>> {
+    await this.findProductOrThrow(productId);
+    await this.findOptionOrThrow(productId, optionId);
+
+    const inUse = await this.prisma.variantOptionValue.findFirst({
+      where: { productOptionValue: { productOptionId: optionId } },
+    });
+    if (inUse) {
+      throw new BadRequestException(
+        'Cannot remove this option — one or more of its values are used by variants. Delete those variants first.',
+      );
+    }
+
+    // onDelete: Cascade removes ProductOptionValues automatically
+    await this.prisma.productOption.delete({ where: { id: optionId } });
     return { status: true, message: 'Option removed from product successfully', data: null };
   }
 
-  // ── Option values ────────────────────────────────────────────────────────────
+  // ── Option values ─────────────────────────────────────────────────────────────
 
   async addValue(
     productId: string,
-    productOptionId: string,
-    input: AddOptionValueDto,
-  ): Promise<ApiResponse<any>> {
-    await this.findProductOptionOrThrow(productId, productOptionId);
+    optionId: string,
+    input: CreateProductOptionValueDto,
+  ): Promise<ApiResponse<ProductOptionValueResponseDto>> {
+    await this.findProductOrThrow(productId);
+    await this.findOptionOrThrow(productId, optionId);
 
-    const exists = await this.prisma.optionValue.findFirst({
-      where: { productOptionId, value: input.value },
+    const conflict = await this.prisma.productOptionValue.findUnique({
+      where: { productOptionId_value: { productOptionId: optionId, value: input.value } },
     });
-    if (exists) {
-      throw new ConflictException(`Value "${input.value}" already exists for this option`);
+    if (conflict) {
+      throw new ConflictException(`Value "${input.value}" already exists on this option`);
     }
 
-    const value = await this.prisma.optionValue.create({
+    const value = await this.prisma.productOptionValue.create({
       data: {
-        productOptionId,
+        productOptionId: optionId,
         value: input.value,
-        displayName: input.displayName ?? null,
-        position: input.position ?? 0,
+        colorHex: input.colorHex ?? null,
       },
     });
 
-    return {
-      status: true,
-      message: 'Option value added successfully',
-      data: value,
-    };
+    return { status: true, message: 'Option value added successfully', data: value };
   }
 
   async updateValue(
     productId: string,
-    productOptionId: string,
+    optionId: string,
     valueId: string,
-    input: UpdateOptionValueDto,
-  ): Promise<ApiResponse<any>> {
-    await this.findProductOptionOrThrow(productId, productOptionId);
+    input: UpdateProductOptionValueDto,
+  ): Promise<ApiResponse<ProductOptionValueResponseDto>> {
+    await this.findProductOrThrow(productId);
+    await this.findOptionOrThrow(productId, optionId);
+    await this.findValueOrThrow(optionId, valueId);
 
-    const optionValue = await this.prisma.optionValue.findFirst({
-      where: { id: valueId, productOptionId },
-    });
-    if (!optionValue) throw new NotFoundException('Option value not found');
+    if (input.value) {
+      const conflict = await this.prisma.productOptionValue.findFirst({
+        where: { productOptionId: optionId, value: input.value, id: { not: valueId } },
+      });
+      if (conflict) {
+        throw new ConflictException(`Value "${input.value}" already exists on this option`);
+      }
+    }
 
-    const updated = await this.prisma.optionValue.update({
+    const updated = await this.prisma.productOptionValue.update({
       where: { id: valueId },
       data: {
-        ...(input.displayName !== undefined && { displayName: input.displayName }),
-        ...(input.position !== undefined && { position: input.position }),
-        ...(input.isActive !== undefined && { isActive: input.isActive }),
+        ...(input.value !== undefined && { value: input.value }),
+        ...(input.colorHex !== undefined && { colorHex: input.colorHex }),
       },
     });
 
-    return {
-      status: true,
-      message: 'Option value updated successfully',
-      data: updated,
-    };
+    return { status: true, message: 'Option value updated successfully', data: updated };
   }
 
   async removeValue(
     productId: string,
-    productOptionId: string,
+    optionId: string,
     valueId: string,
   ): Promise<ApiResponse<null>> {
-    await this.findProductOptionOrThrow(productId, productOptionId);
+    await this.findProductOrThrow(productId);
+    await this.findOptionOrThrow(productId, optionId);
+    await this.findValueOrThrow(optionId, valueId);
 
-    const optionValue = await this.prisma.optionValue.findFirst({
-      where: { id: valueId, productOptionId },
+    await this.prisma.productOptionValue.update({
+      where: { id: valueId },
+      data: { isDeleted: true, isActive: false },
     });
-    if (!optionValue) throw new NotFoundException('Option value not found');
-
-    const usedByVariant = await this.prisma.variantOptionValue.findFirst({
-      where: { optionValueId: valueId },
-    });
-    if (usedByVariant) {
-      throw new BadRequestException(
-        'Cannot delete value — a variant is using it. Delete the variant first.',
-      );
-    }
-
-    await this.prisma.optionValue.delete({ where: { id: valueId } });
     return { status: true, message: 'Option value deleted successfully', data: null };
+  }
+
+  async toggleValueStatus(
+    productId: string,
+    optionId: string,
+    valueId: string,
+  ): Promise<ApiResponse<any>> {
+    await this.findProductOrThrow(productId);
+    await this.findOptionOrThrow(productId, optionId);
+    const value = await this.findValueOrThrow(optionId, valueId);
+
+    const updated = await this.prisma.productOptionValue.update({
+      where: { id: valueId },
+      data: { isActive: !value.isActive },
+    });
+    return {
+      status: true,
+      message: `Option value ${updated.isActive ? 'enabled' : 'disabled'} successfully`,
+      data: updated,
+    };
   }
 }

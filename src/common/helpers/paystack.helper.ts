@@ -170,7 +170,6 @@ export const fetchPaystackBankProviders = async (): Promise<FetchDedicatedBankPr
         );
         return response.data;
     } catch (error) {
-        console.log(error)
         throw new HttpException(
             error.response?.data?.message || 'Unable to fetch bank provider list',
             error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
@@ -206,7 +205,6 @@ export const handlePaystackwebHook = async (input: PayStackWebhook): Promise<boo
 
 export const  verifySignature =(signature: string, payload: any)=> {
     try {
-        console.log('Paystack Secret Key:', paystackSecret);
         const hash = crypto
             .createHmac('sha512', paystackSecret)
             .update(JSON.stringify(payload))
@@ -214,7 +212,6 @@ export const  verifySignature =(signature: string, payload: any)=> {
 
         return hash === signature;
     } catch(error) {
-        console.error('Signature verification failed:', error);
         return false;
     }
 }

@@ -1,5 +1,4 @@
 import {
-    IsBoolean,
     IsNotEmpty,
     IsOptional,
     IsString,
@@ -53,10 +52,7 @@ export class CreateShippingAddressDto {
     @IsOptional()
     postalCode?: string;
 
-    @ApiPropertyOptional({ example: false, description: 'Set as default shipping address' })
-    @IsBoolean()
-    @IsOptional()
-    isDefault?: boolean;
+    // isDefault is always true for newly created addresses — no need to pass it
 }
 
 export class UpdateShippingAddressDto {

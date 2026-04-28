@@ -4,9 +4,11 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -15,21 +17,27 @@ import {
   ApiOperation,
   ApiParam,
   ApiResponse,
+  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
 import { Cacheable } from 'src/cache/cache.decorator';
 import { CacheInterceptor } from 'src/cache/cache.interceptor';
+import { AttachImageDto } from 'src/image/dto/image.dto';
 import { VariantService } from './variant.service';
 import {
+  BulkCreateVariantsDto,
+  BulkUpdateVariantsDto,
   CreateVariantDto,
   UpdateStockDto,
   UpdateVariantDto,
   VariantQueryDto,
 } from './dto/variant.dto';
+import { UploadFiles } from 'src/common/helpers/file-upload.helper';
 
 @ApiTags('product variants')
+@ApiSecurity('x-api-key')
 @Controller('products/:productId/variants')
 export class VariantController {
   constructor(private readonly variantService: VariantService) {}
@@ -49,39 +57,87 @@ export class VariantController {
 
   // ── Admin ────────────────────────────────────────────────────────────────────
 
+  @Patch('bulk')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Update multiple variants in one atomic call (admin only)',
+    description: 'All updates are applied in a single transaction — if any one fails, none are saved.',
+  })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiResponse({ status: 200, description: 'All variants updated' })
+  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'One or more variant IDs not found on this product' })
+  updateBulk(@Param('productId') productId: string, @Body() input: BulkUpdateVariantsDto) {
+    return this.variantService.updateBulk(productId, input);
+  }
+
+  @Post('bulk')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Create multiple variants for a product in one atomic call (admin only)',
+    description: 'All variants are created in a single transaction — if any one fails, none are saved.',
+  })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiResponse({ status: 201, description: 'All variants created' })
+  @ApiResponse({ status: 400, description: 'Invalid option value IDs, duplicate option dimension, or duplicate combination within the request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Product not found or option value IDs not on this product' })
+  @ApiResponse({ status: 409, description: 'One or more SKUs already in use or combination already exists' })
+  createBulk(@Param('productId') productId: string, @Body() input: BulkCreateVariantsDto) {
+    return this.variantService.createBulk(productId, input);
+  }
+
   @Post()
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create a variant for a product (admin only)' })
+  @UploadFiles('images', 2)
+  @ApiOperation({
+    summary: 'Create a variant for a product (admin only)',
+    description: 'Accepts JSON or multipart/form-data. Include up to 2 images by sending files in the `images` field. When using form-data, repeat `productOptionValueIds` for each UUID.',
+  })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
   @ApiResponse({ status: 201, description: 'Variant created' })
-  @ApiResponse({ status: 400, description: 'Invalid option value IDs or duplicate combination' })
+  @ApiResponse({ status: 400, description: 'Invalid option value IDs, duplicate combination, or image limit exceeded' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
   @ApiResponse({ status: 404, description: 'Product not found' })
   @ApiResponse({ status: 409, description: 'SKU already in use or combination already exists' })
-  create(@Param('productId') productId: string, @Body() input: CreateVariantDto) {
-    return this.variantService.create(productId, input);
+  create(
+    @Param('productId') productId: string,
+    @Body() input: CreateVariantDto,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    return this.variantService.create(productId, input, files);
   }
 
   @Patch(':variantId')
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update a variant (admin only)' })
+  @UploadFiles('images', 2)
+  @ApiOperation({
+    summary: 'Update a variant (admin only)',
+    description: 'Accepts JSON or multipart/form-data. Include up to 2 images total by sending files in the `images` field.',
+  })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
   @ApiParam({ name: 'variantId', description: 'Variant UUID' })
   @ApiResponse({ status: 200, description: 'Variant updated' })
-  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiResponse({ status: 400, description: 'Invalid input or image limit exceeded' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
   @ApiResponse({ status: 404, description: 'Variant not found' })
-  @ApiResponse({ status: 409, description: 'SKU already in use' })
+  @ApiResponse({ status: 409, description: 'Name already in use' })
   update(
     @Param('productId') productId: string,
     @Param('variantId') variantId: string,
     @Body() input: UpdateVariantDto,
+    @UploadedFiles() files: Express.Multer.File[],
   ) {
-    return this.variantService.update(productId, variantId, input);
+    return this.variantService.update(productId, variantId, input, files);
   }
 
   @Patch(':variantId/stock')
@@ -102,10 +158,27 @@ export class VariantController {
     return this.variantService.updateStock(productId, variantId, input);
   }
 
+  @Patch(':variantId/toggle')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Enable or disable a variant (admin only)' })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiParam({ name: 'variantId', description: 'Variant UUID' })
+  @ApiResponse({ status: 200, description: 'Variant enabled or disabled' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Variant not found' })
+  toggleStatus(
+    @Param('productId') productId: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+  ) {
+    return this.variantService.toggleStatus(productId, variantId);
+  }
+
   @Delete(':variantId')
   @UseGuards(AuthGuard, AdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Delete or deactivate a variant (admin only)' })
+  @ApiOperation({ summary: 'Soft-delete a variant (admin only)' })
   @ApiParam({ name: 'productId', description: 'Product UUID' })
   @ApiParam({ name: 'variantId', description: 'Variant UUID' })
   @ApiResponse({ status: 200, description: 'Variant deleted or deactivated' })
@@ -114,5 +187,83 @@ export class VariantController {
   @ApiResponse({ status: 404, description: 'Variant not found' })
   remove(@Param('productId') productId: string, @Param('variantId') variantId: string) {
     return this.variantService.remove(productId, variantId);
+  }
+
+  // ── Image management ─────────────────────────────────────────────────────────
+
+  @Post(':variantId/images')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Attach an image to a variant (admin only)' })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiParam({ name: 'variantId', description: 'Variant UUID' })
+  @ApiResponse({ status: 201, description: 'Image attached' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Variant or image not found' })
+  attachImage(
+    @Param('productId') productId: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+    @Body() dto: AttachImageDto,
+  ) {
+    return this.variantService.attachImage(productId, variantId, dto);
+  }
+
+  @Post(':variantId/images/upload')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @UploadFiles('images', 2)
+  @ApiOperation({ summary: 'Upload and attach up to 2 images to a variant (admin only)' })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiParam({ name: 'variantId', description: 'Variant UUID' })
+  @ApiResponse({ status: 201, description: 'Images uploaded and attached' })
+  @ApiResponse({ status: 400, description: 'No files provided, invalid file type, or image limit exceeded' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Variant not found' })
+  uploadVariantImages(
+    @Param('productId') productId: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    return this.variantService.uploadVariantImages(productId, variantId, files);
+  }
+
+  @Delete(':variantId/images/:imageId/permanent')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Permanently delete a variant image from DB and S3 (admin only)' })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiParam({ name: 'variantId', description: 'Variant UUID' })
+  @ApiParam({ name: 'imageId', description: 'VariantImage UUID' })
+  @ApiResponse({ status: 200, description: 'Image deleted from DB and S3' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Image not found on this variant' })
+  deleteVariantImage(
+    @Param('productId') productId: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+    @Param('imageId', ParseUUIDPipe) imageId: string,
+  ) {
+    return this.variantService.deleteVariantImage(productId, variantId, imageId);
+  }
+
+  @Delete(':variantId/images/:imageId')
+  @UseGuards(AuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Detach an image from a variant (admin only)' })
+  @ApiParam({ name: 'productId', description: 'Product UUID' })
+  @ApiParam({ name: 'variantId', description: 'Variant UUID' })
+  @ApiParam({ name: 'imageId', description: 'Image UUID' })
+  @ApiResponse({ status: 200, description: 'Image detached' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiResponse({ status: 404, description: 'Variant or image link not found' })
+  detachImage(
+    @Param('productId') productId: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+    @Param('imageId', ParseUUIDPipe) imageId: string,
+  ) {
+    return this.variantService.detachImage(productId, variantId, imageId);
   }
 }

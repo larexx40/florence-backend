@@ -84,6 +84,12 @@ export function generatePassword(){
     return password;
 }
 
+export function generateOrderNumber(): string {
+    const yyyymmdd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const suffix = Math.random().toString(36).toUpperCase().slice(2, 6);
+    return `ORD-${yyyymmdd}-${suffix}`;
+}
+
 export function formatTimeAgo(dateString: string | Date): string {
     const now = new Date();
     const date = new Date(dateString);

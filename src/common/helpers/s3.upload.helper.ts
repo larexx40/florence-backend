@@ -1,5 +1,5 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { InternalServerErrorException } from '@nestjs/common';
+import { InternalServerErrorException, Logger } from '@nestjs/common';
 import { config } from 'dotenv';
 import { Upload } from '@aws-sdk/lib-storage';
 import sharp from 'sharp';
@@ -10,7 +10,10 @@ import { FileUpload } from '../types/types';
 
 config();
 
+const logger = new Logger('S3UploadHelper');
+
 // ── Multer config ─────────────────────────────────────────────────────────────
+// Kept here so existing imports of multerConfig from this file keep working.
 
 export const multerConfig = {
     storage: multer.memoryStorage(),
@@ -20,10 +23,10 @@ export const multerConfig = {
 // ── S3 client ─────────────────────────────────────────────────────────────────
 
 const s3Client = new S3Client({
-    region: process.env.AWS_S3_REGION_NEW ?? process.env.AWS_S3_REGION,
+    region: process.env.AWS_S3_REGION ?? process.env.AWS_S3_REGION,
     credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID_NEW ?? process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY_NEW ?? process.env.AWS_SECRET_ACCESS_KEY,
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? process.env.AWS_SECRET_ACCESS_KEY,
     },
 });
 
@@ -46,7 +49,7 @@ async function addWatermark(imageBuffer: Buffer, mimetype: string): Promise<Buff
 
     const logoPath = getLogoPath();
     if (!logoPath) {
-        console.warn('Watermark logo not found — skipping watermark');
+        logger.warn('Watermark logo not found — skipping watermark');
         return imageBuffer;
     }
 
@@ -72,8 +75,8 @@ async function addWatermark(imageBuffer: Buffer, mimetype: string): Promise<Buff
         return await image
             .composite([{ input: resizedLogo, left, top, blend: 'over' }])
             .toBuffer();
-    } catch (err) {
-        console.warn('Watermark failed — uploading without watermark:', err);
+    } catch (err: any) {
+        logger.warn(`Watermark failed — uploading without watermark: ${err.message}`);
         return imageBuffer;
     }
 }
@@ -101,8 +104,8 @@ async function optimizeImage(buffer: Buffer, mimetype: string, maxWidth = 2048):
         }
 
         return await pipeline.toBuffer();
-    } catch (err) {
-        console.warn('Image optimization failed, uploading original:', err);
+    } catch (err: any) {
+        logger.warn(`Image optimization failed, uploading original: ${err.message}`);
         return buffer;
     }
 }
@@ -123,8 +126,8 @@ async function generateThumbnail(buffer: Buffer, mimetype: string, size = 300): 
         }
 
         return await pipeline.toBuffer();
-    } catch (err) {
-        console.warn('Thumbnail generation failed:', err);
+    } catch (err: any) {
+        logger.warn(`Thumbnail generation failed: ${err.message}`);
         return buffer;
     }
 }
@@ -139,17 +142,19 @@ export async function uploadFileToAWSS3(
     file: Express.Multer.File | FileUpload,
     Key: string,
     shouldOptimize = true,
+    watermark = true,
 ): Promise<string> {
+    const startedAt = Date.now();
     if (!file.buffer || file.buffer.length === 0) {
         throw new InternalServerErrorException(
             'File buffer is empty. Ensure multer is configured with memoryStorage.',
         );
     }
 
-    const requiredEnvVars = ['AWS_ACCESS_KEY_ID_NEW', 'AWS_SECRET_ACCESS_KEY_NEW', 'AWS_S3_REGION_NEW', 'S3_ASSET_BUCKET_NAME'];
+    const requiredEnvVars = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_S3_REGION', 'S3_ASSET_BUCKET_NAME'];
     const missingVars = requiredEnvVars.filter((v) => !process.env[v]);
     if (missingVars.length > 0) {
-        throw new InternalServerErrorException(`Missing environment variables: ${missingVars.join(', ')}`);
+        throw new InternalServerErrorException("Image upload is not configured properly. Missing environment variables");
     }
 
     const Bucket = process.env.S3_ASSET_BUCKET_NAME;
@@ -159,19 +164,24 @@ export async function uploadFileToAWSS3(
     let fileBuffer = file.buffer;
 
     if (shouldOptimize && isImage) {
+        const optimizeStartedAt = Date.now();
         const originalSize = fileBuffer.length;
         fileBuffer = await optimizeImage(fileBuffer, file.mimetype);
         const compression = ((1 - fileBuffer.length / originalSize) * 100).toFixed(2);
-        console.log(
+        logger.log(`Image optimization took ${Date.now() - optimizeStartedAt}ms for ${Key}`);
+        logger.log(
             `Image optimized: ${(originalSize / 1024).toFixed(2)}KB → ${(fileBuffer.length / 1024).toFixed(2)}KB (${compression}% reduction)`,
         );
     }
 
-    if (isImage) {
+    if (isImage && watermark) {
+        const watermarkStartedAt = Date.now();
         fileBuffer = await addWatermark(fileBuffer, file.mimetype);
+        logger.log(`Watermark step completed in ${Date.now() - watermarkStartedAt}ms for ${Key}`);
     }
 
     try {
+        const uploadStartedAt = Date.now();
         if (fileBuffer.length > MIN_MULTIPART_SIZE) {
             const upload = new Upload({
                 client: s3Client,
@@ -182,16 +192,13 @@ export async function uploadFileToAWSS3(
             await s3Client.send(new PutObjectCommand({ Bucket, Key, Body: fileBuffer, ContentType: file.mimetype }));
         }
 
-        return `https://s3.${process.env.AWS_S3_REGION_NEW}.amazonaws.com/${Bucket}/${Key}`;
-    } catch (err) {
-        console.error('S3 upload error:', { message: err.message, code: err.Code, bucket: Bucket, key: Key });
-
-        if (err.Code === 'NoSuchBucket') throw new InternalServerErrorException(`S3 bucket '${Bucket}' does not exist or is not accessible.`);
-        if (err.Code === 'AccessDenied') throw new InternalServerErrorException('Access denied to S3 bucket.');
-        if (err.Code === 'InvalidAccessKeyId') throw new InternalServerErrorException('Invalid AWS Access Key ID.');
-        if (err.Code === 'SignatureDoesNotMatch') throw new InternalServerErrorException('Invalid AWS Secret Access Key.');
-
-        throw new InternalServerErrorException(`Failed to upload file to S3: ${err.message}`);
+        logger.log(`File uploaded to S3: ${Key} (${(fileBuffer.length / 1024).toFixed(2)}KB)`);
+        logger.log(`S3 upload took ${Date.now() - uploadStartedAt}ms for ${Key}`);
+        logger.log(`uploadFileToAWSS3 completed in ${Date.now() - startedAt}ms for ${Key}`);
+        return `https://s3.${process.env.AWS_S3_REGION}.amazonaws.com/${Bucket}/${Key}`;
+    } catch (err: any) {
+        logger.error(`S3 upload failed — key: ${Key}, code: ${err.Code ?? 'unknown'}, message: ${err.message}`);
+        throw new InternalServerErrorException('Unable to upload file. Please try again later.');
     }
 }
 
@@ -202,8 +209,9 @@ export async function uploadImageWithThumbnail(
     file: Express.Multer.File,
     Key: string,
     thumbnailKey?: string,
+    watermark = true,
 ): Promise<{ imageUrl: string; thumbnailUrl?: string }> {
-    const imageUrl = await uploadFileToAWSS3(file, Key, true);
+    const imageUrl = await uploadFileToAWSS3(file, Key, true, watermark);
 
     let thumbnailUrl: string | undefined;
     if (thumbnailKey && file.mimetype?.startsWith('image/')) {
@@ -211,11 +219,11 @@ export async function uploadImageWithThumbnail(
             const thumbnailBuffer = await generateThumbnail(file.buffer, file.mimetype, 300);
             const Bucket = process.env.S3_ASSET_BUCKET_NAME;
             await s3Client.send(new PutObjectCommand({ Bucket, Key: thumbnailKey, Body: thumbnailBuffer, ContentType: file.mimetype }));
-            thumbnailUrl = `https://s3.${process.env.AWS_S3_REGION_NEW}.amazonaws.com/${Bucket}/${thumbnailKey}`;
+            thumbnailUrl = `https://s3.${process.env.AWS_S3_REGION}.amazonaws.com/${Bucket}/${thumbnailKey}`;
 
-            console.log(`Thumbnail generated: ${(thumbnailBuffer.length / 1024).toFixed(2)}KB`);
-        } catch (err) {
-            console.warn('Thumbnail upload failed:', err);
+            logger.log(`Thumbnail generated: ${(thumbnailBuffer.length / 1024).toFixed(2)}KB`);
+        } catch (err: any) {
+            logger.warn(`Thumbnail upload failed — key: ${thumbnailKey}, message: ${err.message}`);
         }
     }
 
@@ -229,9 +237,9 @@ export async function deleteFileFromS3(Key: string): Promise<void> {
     const Bucket = process.env.S3_ASSET_BUCKET_NAME;
     try {
         await s3Client.send(new DeleteObjectCommand({ Bucket, Key }));
-        console.log(`File deleted: ${Key}`);
-    } catch (err) {
-        console.error('S3 delete error:', err);
-        throw new InternalServerErrorException('Failed to delete file.');
+        logger.log(`S3 object deleted: ${Key}`);
+    } catch (err: any) {
+        logger.error(`S3 delete failed — key: ${Key}, message: ${err.message}`);
+        throw new InternalServerErrorException('Unable to delete file. Please try again later.');
     }
 }

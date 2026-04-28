@@ -9,30 +9,78 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
+    env:
+      DOCKER_BUILDKIT: 1
+
     steps:
+      # ─────────────────────────────
+      # 1️⃣ Checkout
+      # ─────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ─────────────────────────────
+      # 2️⃣ QEMU (ARM builds)
+      # ─────────────────────────────
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # ─────────────────────────────
+      # 3️⃣ Buildx (WITH CACHE DRIVER)
+      # ─────────────────────────────
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # ─────────────────────────────
+      # 4️⃣ DockerHub login
+      # ─────────────────────────────
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push image (dev tag)
+      # ─────────────────────────────
+      # 5️⃣ Build & Push (WITH LAYER CACHE 🔥)
+      # ─────────────────────────────
+      - name: Build and push image (cached)
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: Dockerfile.dev
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/florence-backend:dev
-          # Layer cache speeds up subsequent builds significantly
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/everything-florence-backend:dev
+          platforms: linux/arm64
+
+          # ── 🔥 FAST LAYER CACHE (KEY PART)
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy to dev EC2
+          # extra speed boost
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+      # ─────────────────────────────
+      # 6️⃣ Copy compose to EC2
+      # ─────────────────────────────
+      - name: Copy docker-compose.dev.yml to EC2
+        run: |
+          mkdir -p /tmp/ssh
+          printf '%s\n' "${{ secrets.DEV_EC2_SSH_KEY }}" > /tmp/ssh/id_rsa
+          chmod 600 /tmp/ssh/id_rsa
+
+          ssh -o StrictHostKeyChecking=no -i /tmp/ssh/id_rsa \
+            ubuntu@${{ secrets.DEV_EC2_HOST }} \
+            "mkdir -p /home/ubuntu/florence-backend"
+
+          scp -o StrictHostKeyChecking=no -i /tmp/ssh/id_rsa \
+            docker-compose.dev.yml \
+            ubuntu@${{ secrets.DEV_EC2_HOST }}:/home/ubuntu/florence-backend/docker-compose.dev.yml
+
+      # ─────────────────────────────
+      # 7️⃣ Deploy to EC2 (ENV + rollback + restart)
+      # ─────────────────────────────
+      - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DEV_EC2_HOST }}
@@ -42,19 +90,81 @@ jobs:
             set -e
             cd /home/ubuntu/florence-backend
 
-            # Authenticate with Docker Hub on the EC2
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            # ── .env ─────────────────────────────
+            cat > .env <<EOF
 
-            # Pull the new image and restart only the app container.
-            # postgres and redis keep running — no downtime on those.
+            # ── Core
+            DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            DB_NAME=florence_dev
+            DB_USER=florence
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            NODE_ENV=${{ secrets.NODE_ENV }}
+
+            # ── Auth
+            JWT_SECRET_ACCESS_KEY=${{ secrets.JWT_SECRET_ACCESS_KEY }}
+            JWT_SECRET_REFRESH_KEY=${{ secrets.JWT_SECRET_REFRESH_KEY }}
+
+            # ── Redis
+            REDIS_HOST=redis
+            REDIS_PORT=6379
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+
+            # ── AWS
+            S3_ASSET_BUCKET_NAME=${{ secrets.S3_ASSET_BUCKET_NAME }}
+            AWS_S3_REGION=${{ secrets.AWS_S3_REGION }}
+            AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+            # ── SMTP
+            SMTP_FROM=${{ secrets.SMTP_FROM }}
+            SMTP_HOST=${{ secrets.SMTP_HOST }}
+            SMTP_PORT=${{ secrets.SMTP_PORT }}
+            SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}
+            SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+
+            # ── Payments
+            PAYSTACK_API_BASE_URL=${{ secrets.PAYSTACK_API_BASE_URL }}
+            PAYSTACK_SECRET_KEY=${{ secrets.PAYSTACK_SECRET_KEY }}
+            PAYSTACK_PUBLIC_KEY=${{ secrets.PAYSTACK_PUBLIC_KEY }}
+
+            # ── Monitoring
+            STORE_NAME=${{ secrets.STORE_NAME }}
+            SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}
+            SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+            MAX_CACHE_ITEMS=${{ secrets.MAX_CACHE_ITEMS }}
+
+            # ── System
+            PORT=3000
+            SEED_API_KEY=${{ secrets.SEED_API_KEY }}
+            API_KEY=${{ secrets.API_KEY }}
+
+            EOF
+
+            chmod 600 .env
+
+            # ─────────────────────────────
+            # 🐳 Docker login
+            # ─────────────────────────────
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+              | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+            # ─────────────────────────────
+            # 📦 Pull new image
+            # ─────────────────────────────
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} \
               docker compose -f docker-compose.dev.yml pull app
 
+            # ─────────────────────────────
+            # 🔁 Restart app only
+            # ─────────────────────────────
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} \
               docker compose -f docker-compose.dev.yml up -d --no-deps app
 
-            # Remove dangling images to keep disk clean
+            # ─────────────────────────────
+            # 🧹 Cleanup
+            # ─────────────────────────────
             docker image prune -f
 
-            echo "Deploy complete. Running containers:"
+            echo "🚀 Deploy complete"
             docker compose -f docker-compose.dev.yml ps
