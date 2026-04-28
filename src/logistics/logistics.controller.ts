@@ -8,10 +8,12 @@ import {
     Patch,
     Post,
     Query,
+    Req,
     UploadedFile,
     UseGuards,
     UseInterceptors,
 } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import {
     ApiBearerAuth,
     ApiBody,
@@ -26,18 +28,22 @@ import {
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/guards/account.guard';
 import { AdminGuard } from 'src/guards/admin.guards';
+import { OptionalAuthGuard } from 'src/guards/optional-auth.guard';
 import { Cacheable } from 'src/cache/cache.decorator';
 import { CacheInterceptor } from 'src/cache/cache.interceptor';
 import { UploadFile, filePipe } from 'src/common/helpers/file-upload.helper';
 import { LogisticsService } from './logistics.service';
 import {
     AddCoverageDto,
+    CoverageQueryDto,
     CreateLogisticsDto,
     LogisticsQueryDto,
     UpdateCoverageDto,
     UpdateLogisticsDto,
 } from './dto/logistics.dto';
 import {
+    CoverageFlatResponseDto,
+    CoverageListResponseDto,
     CoverageResponseDto,
     LogisticsCompanyResponseDto,
     LogisticsListResponseDto,
@@ -50,6 +56,8 @@ import { PaginatedDataDto } from 'src/common/types/response.type';
     LogisticsCompanyResponseDto,
     LogisticsListResponseDto,
     CoverageResponseDto,
+    CoverageFlatResponseDto,
+    CoverageListResponseDto,
     PaginatedDataDto,
 )
 @Controller('logistics')
@@ -94,6 +102,29 @@ export class LogisticsController {
     @ApiResponse({ status: 404, description: 'State not found' })
     getByState(@Param('stateId', ParseUUIDPipe) stateId: string) {
         return this.logisticsService.getByState(stateId);
+    }
+
+    @Get('coverages')
+    @UseGuards(OptionalAuthGuard)
+    @ApiOperation({
+        summary: 'List all coverage areas with search, sort, filter, and pagination',
+        description:
+            'Public / customers: returns only active coverages for active logistics companies. ' +
+            'Admins (Bearer token required): returns all coverages and can filter by `isActive`.',
+    })
+    @ApiOkResponse({
+        schema: {
+            properties: {
+                status: { type: 'boolean', example: true },
+                message: { type: 'string', example: 'Coverages fetched successfully' },
+                data: { $ref: getSchemaPath(CoverageListResponseDto) },
+            },
+        },
+    })
+    getCoverages(@Query() query: CoverageQueryDto, @Req() req: any) {
+        const isAdmin =
+            req.user?.role === Role.ADMIN || req.user?.role === Role.SUPER_ADMIN;
+        return this.logisticsService.getCoverages(query, isAdmin);
     }
 
     // ── Admin: company CRUD ──────────────────────────────────────────────────────
