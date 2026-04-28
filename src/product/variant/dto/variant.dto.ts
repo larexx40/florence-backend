@@ -56,6 +56,18 @@ export class VariantQueryDto {
   all?: boolean;
 }
 
+export class GlobalVariantQueryDto extends VariantQueryDto {
+  @ApiPropertyOptional({ example: 'black', description: 'Search by variant title or SKU (case-insensitive)' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional({ example: 'uuid-of-product', description: 'Filter variants by product UUID' })
+  @IsOptional()
+  @IsUUID('4')
+  productId?: string;
+}
+
 export class CreateVariantDto {
 
   @ApiProperty({ example: 14000 })

@@ -1,0 +1,59 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    # Retry on failure — Loki may not be available instantly at startup
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+
+scrape_configs:
+  - job_name: florence-api
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          # Match both dev and prod app containers by name
+          - name: name
+            values: ["florence-app-dev", "florence-app-prod"]
+
+    relabel_configs:
+      # Strip the leading slash from container name (/florence-app-dev → florence-app-dev)
+      - source_labels: [__meta_docker_container_name]
+        regex: /(.*)
+        target_label: container
+
+      # Use the compose service name as the primary service label
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+        replacement: florence-app
+
+      # Derive env label from NODE_ENV container env var (injected via env_file in compose)
+      - source_labels: [__meta_docker_container_env_NODE_ENV]
+        target_label: env
+
+    pipeline_stages:
+      # Parse the JSON log line emitted by pino
+      - json:
+          expressions:
+            level: level
+            reqId: reqId
+            userId: userId
+            method: method
+            url: url
+            statusCode: statusCode
+            responseTime: responseTime
+
+      # Promote level to a Loki label (enables fast label-based filtering)
+      - labels:
+          level:
+
+      # Use the pino msg field as the final log line content
+      - output:
+          source: msg

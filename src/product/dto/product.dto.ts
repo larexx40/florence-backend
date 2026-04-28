@@ -80,12 +80,14 @@ export class CreateProductDto {
 
   @ApiPropertyOptional({ example: 1, minimum: 1, description: 'Minimum units per order' })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseInt(value, 10) : value))
   @IsInt()
   @Min(1)
   minOrderQty?: number;
 
   @ApiPropertyOptional({ example: 6, description: 'Quantity must be a multiple of this value' })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseInt(value, 10) : value))
   @IsInt()
   @Min(1)
   orderIncrement?: number;
@@ -95,6 +97,7 @@ export class CreateProductDto {
     description: 'false = product has no variants; a single default variant is created automatically using price and quantity',
   })
   @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   hasVariant?: boolean;
 
@@ -103,6 +106,7 @@ export class CreateProductDto {
     description: 'Required when hasVariant is false. Price of the single default variant.',
   })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseFloat(value) : value))
   @IsNumber({}, { message: 'price must be a number' })
   @IsPositive({ message: 'price must be greater than 0' })
   price?: number;
@@ -113,12 +117,14 @@ export class CreateProductDto {
     minimum: 0,
   })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseInt(value, 10) : value))
   @IsInt()
   @Min(0)
   quantity?: number;
 
   @ApiPropertyOptional({ example: false, description: 'Enable the direct discount on this product' })
   @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   directDiscountEnabled?: boolean;
 
@@ -129,7 +135,8 @@ export class CreateProductDto {
 
   @ApiPropertyOptional({ example: '15.00', description: 'Percentage (0–100) or absolute amount depending on directDiscountType' })
   @IsOptional()
-  @IsDecimal()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseFloat(value) : value))
+  @IsNumber({}, { message: 'Discount Value must be a number' })
   @IsPositive()
   directDiscountValue?: string;
 }
@@ -152,17 +159,20 @@ export class UpdateProductDto {
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   isActive?: boolean;
 
   @ApiPropertyOptional({ example: 1 })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseInt(value, 10) : value))
   @IsInt()
   @Min(1)
   minOrderQty?: number;
 
   @ApiPropertyOptional({ example: 6 })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseInt(value, 10) : value))
   @IsInt()
   @Min(1)
   orderIncrement?: number;
@@ -174,6 +184,7 @@ export class UpdateProductDto {
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   hasVariant?: boolean;
 
@@ -184,6 +195,7 @@ export class UpdateProductDto {
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   directDiscountEnabled?: boolean;
 
@@ -194,6 +206,7 @@ export class UpdateProductDto {
 
   @ApiPropertyOptional({ example: '15.00' })
   @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? parseFloat(value) : value))
   @IsDecimal()
   @IsPositive()
   directDiscountValue?: string;

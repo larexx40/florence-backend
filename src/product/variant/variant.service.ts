@@ -13,11 +13,29 @@ import { generateVariantSku } from 'src/common/helpers/slug.helper';
 import { buildS3ImageKey, cleanupOrphanedS3Image, validateImageFile } from 'src/common/helpers/image.helper';
 import { uploadFileToAWSS3 } from 'src/common/helpers/s3.upload.helper';
 import { AttachImageDto } from 'src/image/dto/image.dto';
-import { BulkCreateVariantsDto, BulkUpdateVariantsDto, CreateVariantDto, UpdateStockDto, UpdateVariantDto, VariantQueryDto } from './dto/variant.dto';
+import { BulkCreateVariantsDto, BulkUpdateVariantsDto, CreateVariantDto, GlobalVariantQueryDto, UpdateStockDto, UpdateVariantDto, VariantQueryDto } from './dto/variant.dto';
 
 const MAX_VARIANT_IMAGES = 2;
 
 // ── Shared include ────────────────────────────────────────────────────────────
+
+const GLOBAL_VARIANT_INCLUDE = {
+  product: { select: { id: true, name: true, slug: true } },
+  variantOptionValues: {
+    include: {
+      productOptionValue: {
+        include: {
+          productOption: {
+            include: { categoryOption: { select: { id: true, name: true } } },
+          },
+        },
+      },
+    },
+  },
+  images: {
+    orderBy: { position: 'asc' as const },
+  },
+};
 
 const VARIANT_INCLUDE = {
   variantOptionValues: {
@@ -62,6 +80,72 @@ export class VariantService {
   }
 
   // ── Queries ──────────────────────────────────────────────────────────────────
+
+  async getAllGlobal(
+    query: GlobalVariantQueryDto,
+  ): Promise<ApiResponse<{ variants: any[]; pagination: PaginatedData }>> {
+    const page = Math.max(1, parseInt(query.page ?? '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(query.limit ?? '20', 10)));
+    const sortBy = query.sortBy ?? 'createdAt';
+    const sortOrder = query.sortOrder ?? 'desc';
+
+    const where = {
+      isDeleted: false,
+      ...(!query.includeInactive && { isActive: true }),
+      ...(query.inStock && { stockQty: { gt: 0 } }),
+      ...(query.productId && { productId: query.productId }),
+      ...(query.search && {
+        OR: [
+          { title: { contains: query.search, mode: 'insensitive' as const } },
+          { sku: { contains: query.search, mode: 'insensitive' as const } },
+        ],
+      }),
+    };
+
+    const orderBy = { [sortBy]: sortOrder };
+
+    if (query.all) {
+      const variants = await this.prisma.productVariant.findMany({
+        where,
+        orderBy,
+        include: GLOBAL_VARIANT_INCLUDE,
+      });
+      const total = variants.length;
+      return {
+        status: true,
+        message: 'Variants fetched successfully',
+        data: {
+          variants,
+          pagination: { totalData: total, totalPages: 1, currentPage: 1, perPage: total },
+        },
+      };
+    }
+
+    const [variants, total] = await Promise.all([
+      this.prisma.productVariant.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+        include: GLOBAL_VARIANT_INCLUDE,
+      }),
+      this.prisma.productVariant.count({ where }),
+    ]);
+
+    return {
+      status: true,
+      message: 'Variants fetched successfully',
+      data: {
+        variants,
+        pagination: {
+          totalData: total,
+          totalPages: Math.ceil(total / limit),
+          currentPage: page,
+          perPage: limit,
+        },
+      },
+    };
+  }
 
   async getAll(
     productId: string,

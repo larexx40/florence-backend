@@ -613,6 +613,7 @@ model LogisticsCoverage {
   logisticsCompanyId String   @map("logistics_company_id")
   cityId             String   @map("city_id")
   localGovernmentId  String?  @map("local_government_id")
+  isActive    Boolean  @default(true) @map("is_active")
   shippingFee        Decimal  @default(0) @map("shipping_fee") @db.Decimal(12, 2)
   createdAt          DateTime @default(now()) @map("created_at")
 

@@ -1,11 +1,18 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger as NestLogger, ValidationPipe, VERSION_NEUTRAL, VersioningType } from '@nestjs/common';
+import { Logger } from 'nestjs-pino';
 import { GlobalHttpExceptionFilter } from './common/filters/exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
+  app.setGlobalPrefix('api');
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: VERSION_NEUTRAL,
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
@@ -13,7 +20,7 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
-  app.useGlobalFilters(new GlobalHttpExceptionFilter());
+  app.useGlobalFilters(app.get(GlobalHttpExceptionFilter));
 
   app.enableCors({
     origin: [
@@ -43,7 +50,7 @@ async function bootstrap() {
 
 
   await app.listen(port, () => {
-    const logger = new Logger()
+    const logger = new NestLogger('Bootstrap');
     logger.log(`Server is running on http://localhost:${port}`);
     logger.log(`Swagger docs available at http://localhost:${port}/api/docs`);
   });

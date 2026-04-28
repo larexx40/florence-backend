@@ -77,3 +77,51 @@ export class LogisticsListResponseDto {
   @ApiProperty({ type: () => PaginatedDataDto })
   pagination: PaginatedDataDto;
 }
+
+// ── Flat coverage (GET /logistics/coverages) ──────────────────────────────────
+
+export class CoverageFlatResponseDto {
+  @ApiProperty({ example: 'uuid' })
+  id: string;
+
+  @ApiProperty({ example: 'uuid-of-company' })
+  logisticsCompanyId: string;
+
+  @ApiProperty({ example: 'Swift Logistics' })
+  logisticsName: string;
+
+  @ApiProperty({ example: 'uuid-of-city' })
+  cityId: string;
+
+  @ApiProperty({ example: 'Lagos Island' })
+  cityName: string;
+
+  @ApiProperty({ example: 'uuid-of-state' })
+  stateId: string;
+
+  @ApiProperty({ example: 'Lagos' })
+  stateName: string;
+
+  @ApiPropertyOptional({ example: 'uuid-of-lga', nullable: true })
+  localGovernmentId: string | null;
+
+  @ApiPropertyOptional({ example: 'Eti-Osa', nullable: true })
+  lgaName: string | null;
+
+  @ApiProperty({ example: 1500 })
+  shippingFee: number;
+
+  @ApiProperty({ example: true })
+  isActive: boolean;
+
+  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  createdAt: Date;
+}
+
+export class CoverageListResponseDto {
+  @ApiProperty({ type: () => [CoverageFlatResponseDto] })
+  coverages: CoverageFlatResponseDto[];
+
+  @ApiProperty({ type: () => PaginatedDataDto })
+  pagination: PaginatedDataDto;
+}

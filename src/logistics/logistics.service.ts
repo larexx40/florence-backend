@@ -14,6 +14,8 @@ import { buildS3ImageKey, cleanupOrphanedS3Image, validateImageFile } from 'src/
 import { uploadFileToAWSS3 } from 'src/common/helpers/s3.upload.helper';
 import {
     AddCoverageDto,
+    CoverageQueryDto,
+    CoverageSortBy,
     CreateLogisticsDto,
     LogisticsQueryDto,
     UpdateCoverageDto,
@@ -259,6 +261,7 @@ export class LogisticsService {
             data: {
                 ...(dto.shippingFee !== undefined && { shippingFee: dto.shippingFee }),
                 ...(dto.localGovernmentId !== undefined && { localGovernmentId: dto.localGovernmentId }),
+                ...(dto.isActive !== undefined && { isActive: dto.isActive }),
             },
             include: COVERAGE_INCLUDE,
         });
@@ -277,6 +280,100 @@ export class LogisticsService {
         await this.prisma.logisticsCoverage.delete({ where: { id: coverageId } });
         await this.cache.invalidateByPrefix(buildInvalidationPrefix('/logistics'));
         return { status: true, message: 'Coverage area removed successfully', data: null };
+    }
+
+    // ── Coverage list (public + admin) ───────────────────────────────────────────
+
+    async getCoverages(
+        query: CoverageQueryDto,
+        isAdmin: boolean,
+    ): Promise<ApiResponse<{ coverages: any[]; pagination: PaginatedData }>> {
+        const page = Math.max(1, parseInt(query.page ?? '1', 10));
+        const limit = Math.min(100, Math.max(1, parseInt(query.limit ?? '20', 10)));
+        const sortOrder = query.sortOrder ?? 'asc';
+
+        const feeFilter =
+            query.minFee !== undefined || query.maxFee !== undefined
+                ? {
+                      ...(query.minFee !== undefined && { gte: query.minFee }),
+                      ...(query.maxFee !== undefined && { lte: query.maxFee }),
+                  }
+                : undefined;
+
+        const where: Prisma.LogisticsCoverageWhereInput = {
+            ...(!isAdmin && { isActive: true, logisticsCompany: { isActive: true } }),
+            ...(isAdmin && query.isActive !== undefined && { isActive: query.isActive }),
+            ...(query.cityId && { cityId: query.cityId }),
+            ...(query.stateId && { city: { stateId: query.stateId } }),
+            ...(query.companyId && { logisticsCompanyId: query.companyId }),
+            ...(feeFilter && { shippingFee: feeFilter }),
+            ...(query.search && {
+                OR: [
+                    { logisticsCompany: { name: { contains: query.search, mode: 'insensitive' } } },
+                    { city: { name: { contains: query.search, mode: 'insensitive' } } },
+                    { city: { state: { name: { contains: query.search, mode: 'insensitive' } } } },
+                ],
+            }),
+        };
+
+        const orderBy: Prisma.LogisticsCoverageOrderByWithRelationInput = (() => {
+            switch (query.sortBy) {
+                case CoverageSortBy.SHIPPING_FEE:
+                    return { shippingFee: sortOrder };
+                case CoverageSortBy.COMPANY_NAME:
+                    return { logisticsCompany: { name: sortOrder } };
+                case CoverageSortBy.CITY_NAME:
+                    return { city: { name: sortOrder } };
+                case CoverageSortBy.CREATED_AT:
+                default:
+                    return { createdAt: sortOrder };
+            }
+        })();
+
+        const [rows, total] = await Promise.all([
+            this.prisma.logisticsCoverage.findMany({
+                where,
+                include: {
+                    city: { select: { id: true, name: true, state: { select: { id: true, name: true } } } },
+                    localGovernment: { select: { id: true, name: true } },
+                    logisticsCompany: { select: { id: true, name: true } },
+                },
+                orderBy,
+                skip: (page - 1) * limit,
+                take: limit,
+            }),
+            this.prisma.logisticsCoverage.count({ where }),
+        ]);
+
+        const coverages = rows.map((row) => ({
+            id: row.id,
+            logisticsCompanyId: row.logisticsCompanyId,
+            logisticsName: row.logisticsCompany.name,
+            cityId: row.cityId,
+            cityName: row.city.name,
+            stateId: row.city.state.id,
+            stateName: row.city.state.name,
+            localGovernmentId: row.localGovernmentId,
+            lgaName: row.localGovernment?.name ?? null,
+            shippingFee: Number(row.shippingFee),
+            // cast until `npx prisma generate` is run to pick up the isActive field
+            isActive: (row as any).isActive as boolean,
+            createdAt: row.createdAt,
+        }));
+
+        return {
+            status: true,
+            message: 'Coverages fetched successfully',
+            data: {
+                coverages,
+                pagination: {
+                    totalData: total,
+                    totalPages: Math.ceil(total / limit),
+                    currentPage: page,
+                    perPage: limit,
+                },
+            },
+        };
     }
 
     // ── Public: fetch by city / state ────────────────────────────────────────────

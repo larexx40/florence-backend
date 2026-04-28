@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { DirectDiscountType, Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse, PaginatedData } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
@@ -168,6 +168,23 @@ export class ProductService {
     private readonly cache: CacheService,
   ) {}
 
+  // ── Validation helpers ───────────────────────────────────────────────────────
+
+  private validateDirectDiscount(
+    type: DirectDiscountType | undefined | null,
+    value: string | number | undefined | null,
+    price?: number,
+  ): void {
+    if (value == null || type == null) return;
+    const numeric = Number(value);
+    if (type === DirectDiscountType.PERCENTAGE && numeric > 100) {
+      throw new BadRequestException('Discount value cannot exceed 100 for a percentage discount');
+    }
+    if (type === DirectDiscountType.AMOUNT && price !== undefined && numeric > price) {
+      throw new BadRequestException('Discount value cannot exceed the product price');
+    }
+  }
+
   // ── Public queries ───────────────────────────────────────────────────────────
 
   async getAll(
@@ -291,6 +308,12 @@ export class ProductService {
       throw new BadRequestException('price is required when product has no variants');
     }
 
+    this.validateDirectDiscount(
+      input.directDiscountType,
+      input.directDiscountValue,
+      !hasVariant ? input.price : undefined,
+    );
+
     const category = await this.prisma.category.findUnique({ where: { id: input.categoryId } });
     if (!category) throw new NotFoundException('Category not found');
 
@@ -382,6 +405,18 @@ export class ProductService {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException('Product not found');
 
+    if (input.directDiscountValue != null && input.directDiscountType != null) {
+      let minVariantPrice: number | undefined;
+      if (input.directDiscountType === DirectDiscountType.AMOUNT) {
+        const cheapest = await this.prisma.productVariant.findFirst({
+          where: { productId: id, isActive: true },
+          orderBy: { price: 'asc' },
+          select: { price: true },
+        });
+        minVariantPrice = cheapest ? Number(cheapest.price) : undefined;
+      }
+      this.validateDirectDiscount(input.directDiscountType, input.directDiscountValue, minVariantPrice);
+    }
 
     // name changed without an explicit slug — regenerate automatically
     let slug: string | undefined;
