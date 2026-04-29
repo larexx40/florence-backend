@@ -1,0 +1,13 @@
+extends ./_base.pug
+
+block body
+  p Hi #{firstName},
+  p Your #{appName} account has been prepared for you. Use these login details to sign in.
+  .panel
+    p
+      strong Email:
+      |  #{email}
+    p
+      strong Temporary password:
+      |  #{password}
+  p Please change your password after your first login.

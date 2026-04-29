@@ -73,15 +73,12 @@ export function verifyJwt(token: string, hashKey: string) {
     }
 }
 
-export function generatePassword(){
-    var chars = "0123456789abcdefghijklmnopqrstuvwxyz!@#$%^&*()ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    var passwordLength = 12;
-    var password = "";
-    for (var x = 0; x < passwordLength; x++) {
-        var i = Math.floor(Math.random() * chars.length);
-        password += chars.charAt(i);
-    }
-    return password;
+export function generatePassword(): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()';
+  const bytes = randomBytes(12);
+  return Array.from(bytes)
+    .map((b) => chars[b % chars.length])
+    .join('');
 }
 
 export function generateOrderNumber(): string {

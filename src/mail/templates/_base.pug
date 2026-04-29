@@ -1,0 +1,200 @@
+doctype html
+html
+  head
+    meta(charset="UTF-8")
+    meta(name="viewport" content="width=device-width, initial-scale=1.0")
+    title #{subject || `${appName} Notification`}
+    style.
+      body {
+        margin: 0;
+        padding: 0;
+        background: #f6f1eb;
+        color: #2d241d;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+      .shell {
+        width: 100%;
+        padding: 24px 12px;
+        box-sizing: border-box;
+      }
+      .card {
+        max-width: 640px;
+        margin: 0 auto;
+        background: #ffffff;
+        border: 1px solid #eadfd4;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(61, 44, 32, 0.08);
+      }
+      .hero {
+        background: linear-gradient(135deg, #7a4b2f 0%, #c98b5b 100%);
+        color: #ffffff;
+        padding: 28px 32px;
+      }
+      .brand {
+        margin-bottom: 20px;
+      }
+      .brand img {
+        display: block;
+        max-width: 180px;
+        width: 100%;
+        height: auto;
+      }
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        opacity: 0.85;
+      }
+      .hero h1 {
+        margin: 0;
+        font-size: 30px;
+        line-height: 1.2;
+        font-weight: 700;
+      }
+      .content {
+        padding: 32px;
+      }
+      .content p {
+        margin: 0 0 16px;
+        font-size: 16px;
+        line-height: 1.7;
+        color: #4b3b30;
+      }
+      .content a {
+        color: #8f5a36;
+      }
+      .panel {
+        margin: 24px 0;
+        padding: 18px 20px;
+        border-radius: 14px;
+        background: #fbf6f1;
+        border: 1px solid #eadfd4;
+      }
+      .panel p:last-child {
+        margin-bottom: 0;
+      }
+      .token {
+        margin: 24px 0;
+        padding: 18px 20px;
+        text-align: center;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        color: #7a4b2f;
+        background: #fbf6f1;
+        border: 1px dashed #c98b5b;
+        border-radius: 14px;
+      }
+      .button-wrap {
+        margin: 28px 0;
+      }
+      .button {
+        display: inline-block;
+        padding: 14px 22px;
+        border-radius: 999px;
+        background: #7a4b2f;
+        color: #ffffff !important;
+        text-decoration: none;
+        font-weight: 700;
+      }
+      .list {
+        margin: 20px 0;
+        padding: 0;
+        list-style: none;
+      }
+      .list li {
+        margin-bottom: 12px;
+        padding: 14px 16px;
+        background: #fbf6f1;
+        border: 1px solid #eadfd4;
+        border-radius: 12px;
+        color: #4b3b30;
+      }
+      .muted {
+        color: #7b6a5f;
+        font-size: 14px;
+      }
+      .footer {
+        padding: 24px 32px 30px;
+        border-top: 1px solid #f0e6dc;
+        background: #fffaf6;
+      }
+      .footer p {
+        margin: 0 0 10px;
+        font-size: 14px;
+        line-height: 1.6;
+        color: #6c5a4d;
+      }
+      .footer p:last-child {
+        margin-bottom: 0;
+      }
+      .footer-links {
+        margin: 14px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .footer-links li {
+        display: inline-block;
+        margin: 0 12px 10px 0;
+      }
+      .footer-links a {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #8f5a36;
+        text-decoration: none;
+      }
+      .footer-links img {
+        display: block;
+        width: 20px;
+        height: 20px;
+        border: 0;
+      }
+      @media only screen and (max-width: 640px) {
+        .hero,
+        .content,
+        .footer {
+          padding-left: 20px;
+          padding-right: 20px;
+        }
+        .hero h1 {
+          font-size: 26px;
+        }
+      }
+  body
+    .shell
+      .card
+        .hero
+          .brand
+            img(src=logoSrc, alt=`${appName} logo`)
+          if eyebrow
+            p.eyebrow #{eyebrow}
+          if headerTitle
+            h1 #{headerTitle}
+        .content
+          block body
+        .footer
+          block footer
+            p #{business.description}
+            p #{business.productSummary}
+            p
+              a(href=business.mapUrl) #{business.address}
+            p
+              | Phone: 
+              a(href=`tel:${business.phone}`) #{business.phone}
+              |  | WhatsApp: 
+              a(href=business.whatsappSupportUrl) #{business.whatsapp}
+            p
+              | Email: 
+              a(href=`mailto:${supportEmail}`) #{supportEmail}
+            if business.socialLinks && business.socialLinks.length
+              ul.footer-links
+                each social in business.socialLinks
+                  li
+                    a(href=social.href)
+                      if social.iconSrc
+                        img(src=social.iconSrc, alt=social.label)
+                      span #{social.label}
+            p #{footerSignoff || `With care, The ${appName} Team`}

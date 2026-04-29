@@ -7,27 +7,26 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Role, User } from '@prisma/client';
-import { ApiResponse, IRequest } from 'src/common/types';
-import { PrismaService } from 'src/prisma/prisma.service';
+import * as bcrypt from 'bcrypt';
 import { MailService } from 'src/mail/mail.service';
 import { generatePassword } from 'src/common/helpers/helper';
+import { ApiResponse, IRequest } from 'src/common/types';
+import { PrismaService } from 'src/prisma/prisma.service';
 import {
-  AddAdminDto,
   ChangeUserRole,
+  CreateStaffDto,
   UpdateNewAdminProfileDto,
 } from './dto/admin.dto';
-import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name, { timestamp: true });
+  private readonly creatableStaffRoles: Role[] = [Role.ADMIN, Role.SUPPORT, Role.LOGISTICS];
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
   ) {}
-
-  // ── Self ─────────────────────────────────────────────────────────────────────
 
   async getProfile(request: IRequest): Promise<ApiResponse<User>> {
     const user = await this.prisma.user.findUnique({ where: { id: request.user.userId } });
@@ -36,7 +35,10 @@ export class AdminService {
     return { status: true, message: 'Profile fetched successfully', data: user };
   }
 
-  async updateProfile(request: IRequest, input: UpdateNewAdminProfileDto): Promise<ApiResponse<User>> {
+  async updateProfile(
+    request: IRequest,
+    input: UpdateNewAdminProfileDto,
+  ): Promise<ApiResponse<User>> {
     const { firstName, lastName, phone, password } = input;
     const userId = request.user.userId;
 
@@ -44,7 +46,9 @@ export class AdminService {
     if (!userInSession) throw new UnauthorizedException('Unauthorized user access');
 
     if (phone) {
-      const existingPhoneUser = await this.prisma.user.findFirst({ where: { phone, id: { not: userId } } });
+      const existingPhoneUser = await this.prisma.user.findFirst({
+        where: { phone, id: { not: userId } },
+      });
       if (existingPhoneUser) throw new ConflictException('Phone number already in use');
     }
 
@@ -56,8 +60,6 @@ export class AdminService {
 
     return { status: true, message: 'Profile updated successfully', data: updated };
   }
-
-  // ── Role management (SUPER_ADMIN only) ──────────────────────────────────────
 
   async changeUserRole(request: IRequest, input: ChangeUserRole): Promise<ApiResponse<User>> {
     if (request.user.role !== Role.SUPER_ADMIN) {
@@ -78,40 +80,91 @@ export class AdminService {
     return { status: true, message: 'User role updated successfully', data: updated };
   }
 
-  // ── Admin creation (SUPER_ADMIN only) ───────────────────────────────────────
-
-  async addAdmin(request: IRequest, input: AddAdminDto): Promise<ApiResponse<User>> {
+  async createStaff(request: IRequest, input: CreateStaffDto): Promise<ApiResponse<User>> {
     if (request.user.role !== Role.SUPER_ADMIN) {
-      throw new ForbiddenException('Only super admins can add admins');
+      throw new ForbiddenException('Only super admins can add staff');
     }
 
-    const { email, firstName, lastName } = input;
+    const { email, firstName, lastName, phone, role } = input;
+
+    if (!this.creatableStaffRoles.includes(role)) {
+      throw new ForbiddenException('Role must be ADMIN, SUPPORT, or LOGISTICS');
+    }
 
     const existing = await this.prisma.user.findFirst({ where: { email } });
     if (existing) throw new ConflictException(`A user with email ${email} already exists`);
 
+    if (phone) {
+      const existingPhoneUser = await this.prisma.user.findFirst({ where: { phone } });
+      if (existingPhoneUser) throw new ConflictException('Phone number already in use');
+    }
+
     const password = generatePassword();
     const hashed = await bcrypt.hash(password, 10);
 
-    const newAdmin = await this.prisma.user.create({
+    const newStaff = await this.prisma.user.create({
       data: {
         email,
         firstName,
         lastName,
-        role: Role.ADMIN,
+        phone,
+        role,
         password: hashed,
         isProfileComplete: false,
         isEmailVerified: false,
+        loginDetailsSent: true,
       },
     });
 
-    this.mailService.sendMail({
+    await this.mailService.sendMail({
       to: email,
-      subject: 'Welcome — Everything Florence Admin',
+      subject: 'Welcome - Everything Florence Admin',
       template: 'welcome-admin',
-      context: { adminEmail: email, adminPassword: password },
+      context: {
+        eyebrow: 'Staff access',
+        headerTitle: 'Welcome to the admin team',
+        adminName: firstName ?? 'there',
+        adminEmail: email,
+        adminPassword: password,
+        role,
+      },
     });
 
-    return { status: true, message: 'Admin added successfully', data: newAdmin };
+    return { status: true, message: 'Staff created successfully', data: newStaff };
+  }
+
+  async resetStaffPassword(request: IRequest, staffId: string): Promise<ApiResponse<null>> {
+    if (request.user.role !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException('Only super admins can reset staff passwords');
+    }
+
+    const staff = await this.prisma.user.findUnique({ where: { id: staffId } });
+    if (!staff) throw new NotFoundException('Staff member not found');
+    if (!this.creatableStaffRoles.includes(staff.role)) {
+      throw new ForbiddenException('Can only reset passwords for ADMIN, SUPPORT, or LOGISTICS accounts');
+    }
+
+    const password = generatePassword();
+    const hashed = await bcrypt.hash(password, 10);
+
+    await this.prisma.user.update({
+      where: { id: staffId },
+      data: { password: hashed, isProfileComplete: false },
+    });
+
+    await this.mailService.sendMail({
+      to: staff.email,
+      subject: 'Your Password Has Been Reset — Everything Florence',
+      template: 'reset-staff-password',
+      context: {
+        eyebrow: 'Account security',
+        headerTitle: 'Temporary staff password issued',
+        firstName: staff.firstName ?? 'there',
+        email: staff.email,
+        password,
+      },
+    });
+
+    return { status: true, message: 'Password reset and emailed to staff member', data: null };
   }
 }

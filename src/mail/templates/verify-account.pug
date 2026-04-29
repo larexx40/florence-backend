@@ -1,9 +1,8 @@
-doctype html
-html
-  head
-    title Verify Your Account
-  body
-    h1 Verify Your Account
-    p Hi #{firstName},
-    p Your OTP for verification is strong #{verificationOtp} strong. It is valid for the next 10 minutes.
-    p Thank you for registering with us!
+extends ./_base.pug
+
+block body
+  p Hi #{firstName},
+  p Use the code below to verify your #{appName} account.
+  .token #{verificationOtp}
+  p This code expires in 10 minutes.
+  p If you did not request this verification, you can ignore this email.

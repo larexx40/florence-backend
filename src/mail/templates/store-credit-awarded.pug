@@ -1,0 +1,12 @@
+extends ./_base.pug
+
+block body
+  p Hi #{firstName},
+  p We've added store credit to your #{appName} account.
+  .token N#{amount.toLocaleString()}
+  if note
+    .panel
+      p
+        strong Note:
+        |  #{note}
+  p This credit is available for your next purchase.

@@ -264,7 +264,7 @@ export class UsersController {
   })
   @ApiResponse({ status: 400, description: 'Cannot deactivate own account' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Admin access required' })
+  @ApiResponse({ status: 403, description: 'Super admin only, or target is a super admin' })
   @ApiResponse({ status: 404, description: 'User not found' })
   async toggleUserActive(
     @Req() request: IRequest,
