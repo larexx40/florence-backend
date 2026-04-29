@@ -121,6 +121,8 @@ export class AdminService {
       subject: 'Welcome - Everything Florence Admin',
       template: 'welcome-admin',
       context: {
+        eyebrow: 'Staff access',
+        headerTitle: 'Welcome to the admin team',
         adminName: firstName ?? 'there',
         adminEmail: email,
         adminPassword: password,
@@ -155,6 +157,8 @@ export class AdminService {
       subject: 'Your Password Has Been Reset — Everything Florence',
       template: 'reset-staff-password',
       context: {
+        eyebrow: 'Account security',
+        headerTitle: 'Temporary staff password issued',
         firstName: staff.firstName ?? 'there',
         email: staff.email,
         password,

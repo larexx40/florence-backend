@@ -439,6 +439,8 @@ export class CheckoutService {
       subject: `Order Confirmed — ${orderNumber} | Everything Florence`,
       template: 'order-confirmation',
       context: {
+        eyebrow: 'Order confirmed',
+        headerTitle: `Order ${orderNumber} confirmed`,
         firstName: user.firstName ?? 'Customer',
         orderNumber,
         items: lineItems.map((l) => ({

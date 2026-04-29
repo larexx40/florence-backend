@@ -100,6 +100,13 @@ export class MailProcessor {
     return (match?.[1] || value).trim();
   }
 
+  private getSenderAddress(): string {
+    const email =
+      this.extractEmailAddress(process.env.SMTP_FROM) || 'noreply@everythingflorences.com';
+
+    return `"${BUSINESS_DETAILS.name}" <${email}>`;
+  }
+
   @Process(BullJobName.SEND_MAIL)
   async handleSendMail(job: Job<SendMailOptions>): Promise<void> {
     const { to, subject, template, context = {}, htmlBody } = job.data;
@@ -115,7 +122,7 @@ export class MailProcessor {
 
     try {
       await this.transporter.sendMail({
-        from: process.env.SMTP_FROM,
+        from: this.getSenderAddress(),
         to,
         subject,
         html,

@@ -341,6 +341,8 @@ export class UsersService {
       subject: 'Store Credit Added — Everything Florence',
       template: 'store-credit-awarded',
       context: {
+        eyebrow: 'Store credit',
+        headerTitle: 'Store credit added',
         firstName: user.firstName ?? 'Customer',
         amount,
         note: note ?? null,
@@ -360,7 +362,16 @@ export class UsersService {
     await this.mailService.sendMail({
       to: user.email,
       subject: input.subject,
-      htmlBody: `<p>${input.message.replace(/\n/g, '<br>')}</p>`,
+      template: 'custom-message',
+      context: {
+        eyebrow: 'Message from Everything Florence',
+        headerTitle: input.subject,
+        firstName: user.firstName ?? 'Customer',
+        messageLines: input.message
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      },
     });
 
     return { status: true, message: 'Email sent successfully', data: null };
@@ -391,6 +402,8 @@ export class UsersService {
       subject: 'Your Login Details — Everything Florence',
       template: 'send-login-details',
       context: {
+        eyebrow: 'Account access',
+        headerTitle: 'Your login details',
         firstName: user.firstName ?? 'User',
         email: user.email,
         password,
@@ -404,6 +417,10 @@ export class UsersService {
     request: IRequest,
     userId: string,
   ): Promise<ApiResponse<User>> {
+    if (request.user.role !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException('Only super admins can activate or deactivate accounts');
+    }
+
     if (userId === request.user.userId) {
       throw new BadRequestException('You cannot deactivate your own account');
     }
@@ -411,7 +428,7 @@ export class UsersService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.role === Role.SUPER_ADMIN) {
-      throw new ForbiddenException('Cannot deactivate a super admin account');
+      throw new ForbiddenException('Cannot change the status of a super admin account');
     }
 
     const updated = await this.prisma.user.update({

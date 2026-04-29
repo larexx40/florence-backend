@@ -1,0 +1,7 @@
+extends ./_base.pug
+
+block body
+  if firstName
+    p Hi #{firstName},
+  each line in messageLines
+    p #{line}

@@ -169,8 +169,10 @@ html
         .hero
           .brand
             img(src=logoSrc, alt=`${appName} logo`)
-          p.eyebrow #{eyebrow || appName}
-          h1 #{headerTitle || appName}
+          if eyebrow
+            p.eyebrow #{eyebrow}
+          if headerTitle
+            h1 #{headerTitle}
         .content
           block body
         .footer

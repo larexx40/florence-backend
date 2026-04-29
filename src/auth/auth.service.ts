@@ -99,6 +99,8 @@ export class AuthService {
       subject: 'Password Reset Request — Everything Florence',
       template: 'forgot-password',
       context: {
+        eyebrow: 'Account recovery',
+        headerTitle: 'Reset your password',
         firstName: user.firstName ?? 'User',
         resetToken: token,
         resetEmail: email,
