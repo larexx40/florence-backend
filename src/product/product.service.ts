@@ -196,8 +196,12 @@ export class ProductService {
     const sortOrder = query.sortOrder ?? 'desc';
 
     const where: Prisma.ProductWhereInput = {
+      isDeleted: false,
       ...(!query.includeInactive && { isActive: true }),
       ...(query.categoryId && { categoryId: query.categoryId }),
+      ...(query.categorySlug && { category: { slug: query.categorySlug } }),
+      ...(query.featured && { isFeatured: true }),
+      ...(query.bestSelling && { isBestSeller: true }),
       ...(query.search && {
         OR: [
           { name: { contains: query.search, mode: 'insensitive' } },
@@ -206,7 +210,45 @@ export class ProductService {
       }),
     };
 
-    const orderBy = { [sortBy]: sortOrder };
+    // price sort requires in-memory sort since prices live on variants
+    if (sortBy === 'price') {
+      const allRaw = await this.prisma.product.findMany({
+        where,
+        include: PRODUCT_LIST_INCLUDE,
+      });
+      const sorted = allRaw
+        .map(withPriceRange)
+        .sort((a, b) => {
+          const aPrice = a.minPrice ?? (sortOrder === 'asc' ? Infinity : -Infinity);
+          const bPrice = b.minPrice ?? (sortOrder === 'asc' ? Infinity : -Infinity);
+          return sortOrder === 'asc' ? aPrice - bPrice : bPrice - aPrice;
+        });
+
+      const total = sorted.length;
+      const products = query.all ? sorted : sorted.slice((page - 1) * limit, page * limit);
+      return {
+        status: true,
+        message: 'Products fetched successfully',
+        data: {
+          products,
+          pagination: {
+            totalData: total,
+            totalPages: query.all ? 1 : Math.ceil(total / limit),
+            currentPage: query.all ? 1 : page,
+            perPage: query.all ? total : limit,
+          },
+        },
+      };
+    }
+
+    let orderBy: Prisma.ProductOrderByWithRelationInput;
+    if (sortBy === 'featured') {
+      orderBy = { isFeatured: 'desc' };
+    } else if (sortBy === 'bestSelling') {
+      orderBy = { isBestSeller: 'desc' };
+    } else {
+      orderBy = { [sortBy]: sortOrder };
+    }
 
     if (query.all) {
       const raw = await this.prisma.product.findMany({

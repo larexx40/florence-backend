@@ -7,6 +7,7 @@ import { ApiResponse, IRequest, PaginatedData } from 'src/common/types';
 import { buildReceiptHtml, ReceiptOrder } from './receipt.template';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { UpdateOrderStatusDto } from './dto/update-order.dto';
+import { TrackOrderDto } from './dto/track-order.dto';
 
 // ── Include shape ──────────────────────────────────────────────────────────────
 
@@ -141,6 +142,71 @@ export class OrderService {
     });
 
     return { status: true, message: 'Order marked as paid', data: updated };
+  }
+
+  // ── Guest order tracking (public) ────────────────────────────────────────────
+
+  async track(dto: TrackOrderDto): Promise<ApiResponse<OrderDetail>> {
+    const order = await this.prisma.order.findFirst({
+      where: {
+        orderNumber: dto.orderNumber,
+        user: { email: { equals: dto.email, mode: 'insensitive' } },
+      },
+      include: ORDER_DETAIL_INCLUDE,
+    });
+    if (!order) throw new NotFoundException('No order found with that email and order number');
+    return { status: true, message: 'Order fetched successfully', data: order };
+  }
+
+  // ── Authenticated customer — own order history ────────────────────────────────
+
+  async getMyOrders(
+    userId: string,
+    query: OrderQueryDto,
+  ): Promise<ApiResponse<{ orders: OrderDetail[]; pagination: PaginatedData }>> {
+    const limit = query.limit ?? 20;
+    const page = query.page ?? 1;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.OrderWhereInput = {
+      userId,
+      ...(query.status && { status: query.status }),
+      ...(query.paymentStatus && { paymentStatus: query.paymentStatus }),
+    };
+
+    const [orders, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        include: ORDER_DETAIL_INCLUDE,
+        orderBy: { placedAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return {
+      status: true,
+      message: 'Orders fetched successfully',
+      data: {
+        orders,
+        pagination: {
+          totalData: total,
+          totalPages: Math.ceil(total / limit),
+          currentPage: page,
+          perPage: limit,
+        },
+      },
+    };
+  }
+
+  async getMyOrder(userId: string, orderId: string): Promise<ApiResponse<OrderDetail>> {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId, userId },
+      include: ORDER_DETAIL_INCLUDE,
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    return { status: true, message: 'Order fetched successfully', data: order };
   }
 
   // ── Thermal receipt ───────────────────────────────────────────────────────────

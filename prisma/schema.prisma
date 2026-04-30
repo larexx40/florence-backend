@@ -264,6 +264,8 @@ model Product {
   directDiscountType    DirectDiscountType? @map("direct_discount_type")
   // PERCENTAGE: 0–100 (e.g. 15 = 15% off)  |  AMOUNT: absolute deduction in base currency
   directDiscountValue   Decimal?           @map("direct_discount_value") @db.Decimal(12, 2)
+  isFeatured            Boolean            @default(false) @map("is_featured")
+  isBestSeller          Boolean            @default(false) @map("is_best_seller")
   createdAt             DateTime           @default(now()) @map("created_at")
   updatedAt             DateTime           @updatedAt @map("updated_at")
 
@@ -280,6 +282,8 @@ model Product {
   @@index([discountId])
   @@index([isActive])
   @@index([slug])
+  @@index([isFeatured])
+  @@index([isBestSeller])
   @@map("products")
 }
 
@@ -626,4 +630,14 @@ model LogisticsCoverage {
   @@index([logisticsCompanyId])
   @@index([cityId])
   @@map("logistics_coverages")
+}
+
+// ── Newsletter ────────────────────────────────────────────────────────────────
+
+model NewsletterSubscriber {
+  id        String   @id @default(uuid()) @map("id")
+  email     String   @unique @map("email")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("newsletter_subscribers")
 }

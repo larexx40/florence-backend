@@ -26,6 +26,7 @@ import { ImageModule } from './image/image.module';
 import { CheckoutModule } from './checkout/checkout.module';
 import { OrderModule } from './order/order.module';
 import { UploadModule } from './upload/upload.module';
+import { NewsletterModule } from './newsletter/newsletter.module';
 
 @Module({
   imports: [
@@ -71,6 +72,7 @@ import { UploadModule } from './upload/upload.module';
     CheckoutModule,
     OrderModule,
     UploadModule,
+    NewsletterModule,
   ],
   controllers: [AppController],
   providers: [

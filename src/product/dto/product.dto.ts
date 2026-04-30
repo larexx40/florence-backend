@@ -28,10 +28,19 @@ export class ProductQueryDto {
   @IsUUID('4')
   categoryId?: string;
 
-  @ApiPropertyOptional({ enum: ['name', 'createdAt'], example: 'createdAt' })
+  @ApiPropertyOptional({ example: 'bags', description: 'Filter by category slug (alternative to categoryId)' })
   @IsOptional()
-  @IsIn(['name', 'createdAt'])
-  sortBy?: 'name' | 'createdAt';
+  @IsString()
+  categorySlug?: string;
+
+  @ApiPropertyOptional({
+    enum: ['name', 'createdAt', 'price', 'featured', 'bestSelling'],
+    example: 'createdAt',
+    description: 'price sorts by minimum variant price; featured and bestSelling sort boolean flags descending',
+  })
+  @IsOptional()
+  @IsIn(['name', 'createdAt', 'price', 'featured', 'bestSelling'])
+  sortBy?: 'name' | 'createdAt' | 'price' | 'featured' | 'bestSelling';
 
   @ApiPropertyOptional({ enum: ['asc', 'desc'], example: 'desc' })
   @IsOptional()
@@ -47,6 +56,18 @@ export class ProductQueryDto {
   @IsOptional()
   @IsNumberString()
   limit?: string;
+
+  @ApiPropertyOptional({ example: false, description: 'Filter to featured products only' })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  featured?: boolean;
+
+  @ApiPropertyOptional({ example: false, description: 'Filter to best-selling products only' })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  bestSelling?: boolean;
 
   // admin-only: include inactive products when true
   @ApiPropertyOptional({ example: false })
@@ -162,6 +183,18 @@ export class UpdateProductDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Pin this product in featured sections' })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isFeatured?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Mark this product as a best seller' })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isBestSeller?: boolean;
 
   @ApiPropertyOptional({ example: 1 })
   @IsOptional()
