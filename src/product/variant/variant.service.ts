@@ -17,6 +17,20 @@ import { BulkCreateVariantsDto, BulkUpdateVariantsDto, CreateVariantDto, GlobalV
 
 const MAX_VARIANT_IMAGES = 2;
 
+// ── Serializer ────────────────────────────────────────────────────────────────
+
+function serializeVariant(v: any) {
+  const { variantOptionValues, ...rest } = v;
+  return {
+    ...rest,
+    combination: (variantOptionValues ?? []).map((vov: any) => ({
+      optionName: vov.productOptionValue.productOption.categoryOption.name,
+      value: vov.productOptionValue.value,
+      colorHex: vov.productOptionValue.colorHex ?? null,
+    })),
+  };
+}
+
 // ── Shared include ────────────────────────────────────────────────────────────
 
 const GLOBAL_VARIANT_INCLUDE = {
@@ -178,7 +192,7 @@ export class VariantService {
         status: true,
         message: 'Variants fetched successfully',
         data: {
-          variants,
+          variants: variants.map(serializeVariant),
           pagination: { totalData: total, totalPages: 1, currentPage: 1, perPage: total },
         },
       };
@@ -199,7 +213,7 @@ export class VariantService {
       status: true,
       message: 'Variants fetched successfully',
       data: {
-        variants,
+        variants: variants.map(serializeVariant),
         pagination: {
           totalData: total,
           totalPages: Math.ceil(total / limit),
@@ -359,7 +373,7 @@ export class VariantService {
       : variant.images;
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-    return { status: true, message: 'Variant created successfully', data: { ...variant, images } };
+    return { status: true, message: 'Variant created successfully', data: serializeVariant({ ...variant, images }) };
   }
 
   async createBulk(productId: string, input: BulkCreateVariantsDto): Promise<ApiResponse<any[]>> {
@@ -546,7 +560,7 @@ export class VariantService {
     });
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-    return { status: true, message: 'Variants created successfully', data: created };
+    return { status: true, message: 'Variants created successfully', data: created.map(serializeVariant) };
   }
 
   async updateBulk(productId: string, input: BulkUpdateVariantsDto): Promise<ApiResponse<any[]>> {
@@ -626,7 +640,7 @@ export class VariantService {
     );
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-    return { status: true, message: 'Variants updated successfully', data: updated };
+    return { status: true, message: 'Variants updated successfully', data: updated.map(serializeVariant) };
   }
 
   async update(
@@ -718,7 +732,7 @@ export class VariantService {
     }
 
     await this.cache.invalidateByPrefix(buildInvalidationPrefix('/products'));
-    return { status: true, message: 'Variant updated successfully', data: updated };
+    return { status: true, message: 'Variant updated successfully', data: serializeVariant(updated) };
   }
 
   async updateStock(
@@ -759,7 +773,7 @@ export class VariantService {
     return {
       status: true,
       message: `Variant ${updated.isActive ? 'enabled' : 'disabled'} successfully`,
-      data: updated,
+      data: serializeVariant(updated),
     };
   }
 
