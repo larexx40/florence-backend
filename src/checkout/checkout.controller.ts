@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import {
   ApiExtraModels,
   ApiOkResponse,
@@ -10,6 +10,7 @@ import {
 } from '@nestjs/swagger';
 import { ShippingAddressResponseDto } from 'src/shipping-address/dto/response.dto';
 import { LogisticsCompanyResponseDto } from 'src/logistics/dto/response.dto';
+import { OptionalAuthGuard } from 'src/guards/optional-auth.guard';
 import { CheckoutService } from './checkout.service';
 import { PlaceOrderDto, ResolveShippingDto } from './dto/checkout.dto';
 
@@ -74,6 +75,7 @@ export class CheckoutController {
   }
 
   @Post('place-order')
+  @UseGuards(OptionalAuthGuard)
   @ApiOperation({
     summary: 'Place an order',
     description: [
@@ -106,7 +108,7 @@ export class CheckoutController {
   @ApiResponse({ status: 400, description: 'Invalid input, insufficient stock, or business rule violation' })
   @ApiResponse({ status: 404, description: 'Address, variant, or logistics not found' })
   @ApiResponse({ status: 500, description: 'Paystack initialization failed after order was created' })
-  placeOrder(@Body() dto: PlaceOrderDto) {
-    return this.checkoutService.placeOrder(dto);
+  placeOrder(@Body() dto: PlaceOrderDto, @Req() req: any) {
+    return this.checkoutService.placeOrder(dto, req.user?.userId ?? null);
   }
 }

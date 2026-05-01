@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { Decimal } from '@prisma/client/runtime/library';
-import { Discount, DiscountTier, PaymentMethod, Prisma } from '@prisma/client';
+import { Discount, DiscountTier, PaymentMethod, Prisma, StoreCreditReason, StoreCreditType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { MailService } from 'src/mail/mail.service';
@@ -178,7 +178,7 @@ export class CheckoutService {
 
   // ── place-order ───────────────────────────────────────────────────────────────
 
-  async placeOrder(dto: PlaceOrderDto): Promise<ApiResponse<any>> {
+  async placeOrder(dto: PlaceOrderDto, authenticatedUserId: string | null): Promise<ApiResponse<any>> {
     const { email, paymentMethod, logisticsId, notes } = dto;
 
     if (!dto.addressId && !dto.address) {
@@ -344,7 +344,32 @@ export class CheckoutService {
         }
       }
 
-      return tx.order.create({
+      // ── Store credit — authenticated customers only ───────────────────────
+      let storeCreditApplied = new Decimal(0);
+      let preCreditBalance: Decimal | null = null;
+
+      if (authenticatedUserId) {
+        const freshUser = await tx.user.findUnique({
+          where: { id: authenticatedUserId },
+          select: { storeCreditBalance: true },
+        });
+        if (freshUser && freshUser.storeCreditBalance.gt(0)) {
+          const creditToApply = Decimal.min(freshUser.storeCreditBalance, total);
+          // optimistic lock: no-ops if balance dropped since the read above
+          const creditUpdate = await tx.user.updateMany({
+            where: { id: authenticatedUserId, storeCreditBalance: { gte: creditToApply } },
+            data: { storeCreditBalance: { decrement: creditToApply } },
+          });
+          if (creditUpdate.count > 0) {
+            storeCreditApplied = creditToApply;
+            preCreditBalance = freshUser.storeCreditBalance;
+          }
+        }
+      }
+
+      const paystackAmount = total.sub(storeCreditApplied);
+
+      const newOrder = await tx.order.create({
         data: {
           orderNumber,
           userId: user!.id,
@@ -356,8 +381,8 @@ export class CheckoutService {
           vatRate: VAT_RATE,
           vatAmount,
           shippingFee,
-          storeCreditApplied: 0,
-          paystackAmount: total, // updated below if store credit applied
+          storeCreditApplied,
+          paystackAmount,
           total,
           notes: notes ?? null,
           items: {
@@ -380,6 +405,23 @@ export class CheckoutService {
           logistics: true,
         },
       });
+
+      // Immutable ledger entry for the store credit debit
+      if (storeCreditApplied.gt(0) && authenticatedUserId && preCreditBalance) {
+        await tx.storeCreditTransaction.create({
+          data: {
+            userId: authenticatedUserId,
+            type: StoreCreditType.DEBIT,
+            reason: StoreCreditReason.ORDER_PAYMENT,
+            amount: storeCreditApplied,
+            balanceAfter: preCreditBalance.sub(storeCreditApplied),
+            orderId: newOrder.id,
+            createdBy: authenticatedUserId,
+          },
+        });
+      }
+
+      return newOrder;
     });
 
     // ── 6. Clear the user's cart ─────────────────────────────────────────────────
@@ -403,7 +445,7 @@ export class CheckoutService {
           this.httpService,
           orderNumber,
           email,
-          total.toNumber(),
+          order.paystackAmount.toNumber(), // total minus any store credit applied
           callbackUrl,
           { orderId: order.id, orderNumber },
         );
@@ -450,7 +492,9 @@ export class CheckoutService {
         vatRate: VAT_RATE.toNumber(),
         vatAmount: Number(vatAmount),
         shippingFee: Number(shippingFee),
+        storeCreditApplied: Number(order.storeCreditApplied),
         total: Number(total),
+        amountDue: Number(order.paystackAmount),
         paymentMethod,
         paystackUrl,
       },
