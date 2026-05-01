@@ -138,6 +138,8 @@ jobs:
             PORT=3000
             SEED_API_KEY=${{ secrets.SEED_API_KEY }}
             API_KEY=${{ secrets.API_KEY }}
+            VAT_RATE=${{ secrets.VAT_RATE }}
+            FRONTEND_URL=${{ secrets.FRONTEND_URL }}  
 
             EOF
 

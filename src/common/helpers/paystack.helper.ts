@@ -1,217 +1,108 @@
-import { BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
+import { HttpException, HttpStatus, InternalServerErrorException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
-import { async, first, lastValueFrom } from 'rxjs';
-import { CreateCustomerResponse, CreateVirtualAccountResponse, FetchDedicatedBankProviderResponce, InitPaystackTransactionResponse, PaystackHookEvents, PaystackPreferredBank, PayStackWebhook, VerifyPaystackResponse, VerifyPaystackTransferResponse } from '../types/paystack.types';
+import { lastValueFrom } from 'rxjs';
+import { map, catchError } from 'rxjs/operators';
 import * as crypto from 'crypto';
+import {
+    InitPaystackTransactionResponse,
+    VerifyPaystackResponse,
+} from '../types/paystack.types';
 
 const baseUrl = process.env.PAYSTACK_API_BASE_URL || 'https://api.paystack.co';
-const paystackSecret = process.env.PAYSTACK_SECRET_KEY;
 
-const getHeaders = () => ({
-    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-    'Content-Type': 'application/json',
-});
+const getHeaders = () => {
+    const key = process.env.PAYSTACK_SECRET_KEY;
+    if (!key) throw new InternalServerErrorException('PAYSTACK_SECRET_KEY is not configured');
+    return {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+    };
+};
 
 /**
- * Initialize a transaction
- * @param reference - Transaction reference
- * @param email - Customer's email
- * @param amount - Transaction amount in naira (5000 NGN)
- * @param callbackUrl - URL to redirect after payment
+ * Initialize a Paystack transaction for an order.
+ * @param httpService - injected HttpService from the calling service
+ * @param reference - unique order reference (orderNumber)
+ * @param email - customer email
+ * @param amount - amount in naira (converted to kobo internally)
+ * @param callbackUrl - redirect URL after payment
+ * @param metadata - arbitrary metadata stored with the transaction
  */
-export const initializePaystackTransaction = async (
-    refernce: string,
+export const initializePaystackTransaction = (
+    httpService: HttpService,
+    reference: string,
     email: string,
     amount: number,
     callbackUrl?: string,
-): Promise<InitPaystackTransactionResponse> => {
-    const httpService = new HttpService();
+    metadata?: Record<string, unknown>,
+): Promise<InitPaystackTransactionResponse['data']> => {
     const url = `${baseUrl}/transaction/initialize`;
-    const payload = { email, amount: amount * 100, callback_url: callbackUrl, refernce };
-
-    try {
-        const response = await lastValueFrom(
-            httpService.post(url, payload, { headers: getHeaders() }),
-        );
-        return response.data;
-    } catch (error) {
-        throw new HttpException(
-            error.response?.data?.message || 'Unable to initialize transaction',
-            error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-    }
-};
-
-/**
- * Verify a transaction
- * @param reference - Transaction reference
- */
-export const verifyPaystackTransaction = async (
-    reference: string,
-): Promise<VerifyPaystackResponse> => {
-    const httpService = new HttpService();
-    const url = `${baseUrl}/transaction/verify/${reference}`;
-
-    try {
-        const response = await lastValueFrom(
-            httpService.get(url, { headers: getHeaders() }),
-        );
-        return response.data;
-    } catch (error) {
-        throw new HttpException(
-            error.response?.data?.message || 'Unable to verify transaction',
-            error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-    }
-};
-
-/**
- * Register a customer on Paystack
- * @param email - Customer's email
- * @param firstName - Customer's first name
- * @param lastName - Customer's last name
- * @param lastName - Customer's last name
- */
-export const registerPaystackCustomer = async (
-    email: string,
-    firstName: string,
-    lastName: string,
-): Promise<CreateCustomerResponse> => {
-    const httpService = new HttpService();
-    const url = `${baseUrl}/customer`;
-    const payload = { email, first_name: firstName, last_name: lastName };
-
-    try {
-        const response = await lastValueFrom(
-            httpService.post(url, payload, { headers: getHeaders() }),
-        );
-        return response.data;
-    } catch (error) {
-        throw new HttpException(
-            error.response?.data?.message || 'Unable to register customer',
-            error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-    }
-};
-
-/**
- * Create a virtual account for a customer
- * @param customerId - Paystack customer ID
- * @param preferredBank - Preferred bank slug for the virtual account
- */
-export const createPaystackVirtualAccount = async (
-    customerId: number,
-    preferredBank = "wema-bank",
-): Promise<CreateVirtualAccountResponse> => {
-    const httpService = new HttpService();
-    const url = `${baseUrl}/dedicated_account`;
-    const payload = { customer: customerId, preferred_bank: preferredBank };
-
-    try {
-        const response = await lastValueFrom(
-            httpService.post(url, payload, { headers: getHeaders() }),
-        );
-        return response.data;
-    } catch (error) {
-        throw new HttpException(
-            error.response?.data?.message || 'Unable to create virtual account',
-            error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-    }
-};
-
-
-/**
- * Assign a dedicated account to a user
- * @param email - User's email
- * @param preferredBank - Preferred bank slug for the virtual account
- * @param firstName - User's first name
- * @param lastName - User's last name
- */
-export const assignPaystackDedicatedAccount = async (
-    email: string,
-    preferredBank: PaystackPreferredBank,
-    firstName: string,
-    lastName: string,
-): Promise<CreateVirtualAccountResponse> => {
-    const httpService = new HttpService();
-    const url = `${baseUrl}/dedicated_account/assign`;
     const payload = {
         email,
-        first_name: firstName,
-        last_name: lastName,
-        preferred_bank: preferredBank,
-        country: "NG"
+        amount: Math.round(amount * 100), // kobo, no fractional kobo
+        reference,
+        ...(callbackUrl && { callback_url: callbackUrl }),
+        ...(metadata && { metadata }),
     };
-    try {
-        const response = await lastValueFrom(
-            httpService.post(url, payload, { headers: getHeaders() }),
-        );
-        return response.data;
-        
-    } catch (error) {
-        throw new HttpException(
-            error.message || 'Unable to assign dedicated account',
-            error.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-    }
+
+    return lastValueFrom(
+        httpService
+            .post<InitPaystackTransactionResponse>(url, payload, {
+                headers: getHeaders(),
+                timeout: 10_000,
+            })
+            .pipe(
+                map((res) => res.data.data),
+                catchError((err) => {
+                    throw new HttpException(
+                        err.response?.data?.message || 'Unable to initialize transaction',
+                        err.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+                    );
+                }),
+            ),
+    );
 };
 
 /**
- * Fetch Dedicated Account Providers
+ * Verify a Paystack transaction by reference.
+ * @param httpService - injected HttpService from the calling service
+ * @param reference - the transaction reference to verify
  */
-export const fetchPaystackBankProviders = async (): Promise<FetchDedicatedBankProviderResponce> => {
-    const httpService = new HttpService()
-    const url = `${baseUrl}/dedicated_account/available_providers`;
+export const verifyPaystackTransaction = (
+    httpService: HttpService,
+    reference: string,
+): Promise<VerifyPaystackResponse> => {
+    const url = `${baseUrl}/transaction/verify/${encodeURIComponent(reference)}`;
 
-    try {
-        const response = await lastValueFrom(
-            httpService.get(url, { headers: getHeaders() }),
-        );
-        return response.data;
-    } catch (error) {
-        throw new HttpException(
-            error.response?.data?.message || 'Unable to fetch bank provider list',
-            error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-    }
+    return lastValueFrom(
+        httpService
+            .get<{ status: boolean; data: VerifyPaystackResponse }>(url, {
+                headers: getHeaders(),
+                timeout: 10_000,
+            })
+            .pipe(
+                map((res) => res.data.data),
+                catchError((err) => {
+                    throw new HttpException(
+                        err.response?.data?.message || 'Unable to verify transaction',
+                        err.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+                    );
+                }),
+            ),
+    );
 };
 
-
-export const handlePaystackwebHook = async (input: PayStackWebhook): Promise<boolean> =>{
-    const { data, event } = input;
+/**
+ * Verify Paystack webhook signature using HMAC-SHA512.
+ * Returns false rather than throwing so the controller can respond 200 regardless.
+ */
+export const verifyPaystackSignature = (signature: string, rawBody: string): boolean => {
     try {
-        switch (event) {
-            case PaystackHookEvents.SUCCESS:
-                //verify the transaction
-                const res = await verifyPaystackTransaction(data.reference);
-                if (res.status === 'success') {
-                    return true;
-                }
-                break;
-            case PaystackHookEvents.TRANSFER_SUCCESS: // transfer to bank account  
-                break;
-            case PaystackHookEvents.TRANSFER_FAILED:
-                break;
-            default:
-                break;
-        }
-        return false;
-    } catch (err) {
-        throw new BadRequestException();
-    }
-
-}
-
-export const  verifySignature =(signature: string, payload: any)=> {
-    try {
-        const hash = crypto
-            .createHmac('sha512', paystackSecret)
-            .update(JSON.stringify(payload))
-            .digest('hex');
-
+        const secret = process.env.PAYSTACK_SECRET_KEY;
+        if (!secret) return false;
+        const hash = crypto.createHmac('sha512', secret).update(rawBody).digest('hex');
         return hash === signature;
-    } catch(error) {
+    } catch {
         return false;
     }
-}
+};

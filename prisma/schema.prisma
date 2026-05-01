@@ -465,6 +465,8 @@ model Order {
   logisticsId        String?       @map("logistics_id")
   subtotal           Decimal       @map("subtotal") @db.Decimal(12, 2)
   discountAmount     Decimal       @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  vatRate            Decimal       @default(0) @map("vat_rate") @db.Decimal(6, 4)
+  vatAmount          Decimal       @default(0) @map("vat_amount") @db.Decimal(12, 2)
   shippingFee        Decimal       @default(0) @map("shipping_fee") @db.Decimal(12, 2)
   // amount deducted from user store credit for this order
   storeCreditApplied Decimal       @default(0) @map("store_credit_applied") @db.Decimal(12, 2)

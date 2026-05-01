@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "orders" ADD COLUMN     "vat_amount" DECIMAL(12,2) NOT NULL DEFAULT 0,
+ADD COLUMN     "vat_rate" DECIMAL(6,4) NOT NULL DEFAULT 0;

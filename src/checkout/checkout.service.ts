@@ -8,14 +8,15 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Discount, DiscountTier, PaymentMethod, Prisma } from '@prisma/client';
-import { firstValueFrom } from 'rxjs';
-import { catchError, map } from 'rxjs/operators';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { MailService } from 'src/mail/mail.service';
 import { ApiResponse } from 'src/common/types';
 import { generateOrderNumber, generatePassword } from 'src/common/helpers/helper';
+import { initializePaystackTransaction } from 'src/common/helpers/paystack.helper';
 import { PlaceOrderDto, ResolveShippingDto } from './dto/checkout.dto';
+
+const VAT_RATE = new Decimal(process.env.VAT_RATE ?? '0.075');
 
 // ── Include shapes ────────────────────────────────────────────────────────────
 
@@ -323,7 +324,9 @@ export class CheckoutService {
 
     const subtotal = lineItems.reduce((sum, l) => sum.add(l.unitPrice.mul(l.quantity)), new Decimal(0));
     const totalDiscount = lineItems.reduce((sum, l) => sum.add(l.discountAmount), new Decimal(0));
-    const total = subtotal.sub(totalDiscount).add(shippingFee);
+    const netAmount = subtotal.sub(totalDiscount);
+    const vatAmount = netAmount.mul(VAT_RATE).toDecimalPlaces(2);
+    const total = netAmount.add(vatAmount).add(shippingFee);
 
     // ── 5. Create order atomically ────────────────────────────────────────────
 
@@ -350,6 +353,8 @@ export class CheckoutService {
           logisticsId: logisticsId ?? null,
           subtotal,
           discountAmount: totalDiscount,
+          vatRate: VAT_RATE,
+          vatAmount,
           shippingFee,
           storeCreditApplied: 0,
           paystackAmount: total, // updated below if store credit applied
@@ -389,27 +394,18 @@ export class CheckoutService {
     let accessCode: string | null = null;
 
     if (paymentMethod === PaymentMethod.PAYSTACK) {
-      const paystackKey = process.env.PAYSTACK_SECRET_KEY;
-      const paystackBase = process.env.PAYSTACK_API_BASE_URL ?? 'https://api.paystack.co';
-      if (!paystackKey) throw new InternalServerErrorException('PAYSTACK_SECRET_KEY is not configured');
-
       try {
-        const ps = await firstValueFrom(
-          this.httpService
-            .post<{ status: boolean; data: { authorization_url: string; access_code: string; reference: string } }>(
-              `${paystackBase}/transaction/initialize`,
-              {
-                email,
-                amount: total.mul(100).toFixed(0), // Paystack uses kobo
-                reference: orderNumber,
-                metadata: { orderId: order.id, orderNumber },
-              },
-              { headers: { Authorization: `Bearer ${paystackKey}` }, timeout: 10000 },
-            )
-            .pipe(
-              map((r) => r.data.data),
-              catchError(() => { throw new InternalServerErrorException('Paystack initialization failed'); }),
-            ),
+        const callbackUrl = process.env.FRONTEND_URL
+          ? `${process.env.FRONTEND_URL}/payment/success`
+          : undefined;
+
+        const ps = await initializePaystackTransaction(
+          this.httpService,
+          orderNumber,
+          email,
+          total.toNumber(),
+          callbackUrl,
+          { orderId: order.id, orderNumber },
         );
 
         paystackUrl = ps.authorization_url;
@@ -451,6 +447,8 @@ export class CheckoutService {
         })),
         subtotal: Number(subtotal),
         discount: Number(totalDiscount),
+        vatRate: VAT_RATE.toNumber(),
+        vatAmount: Number(vatAmount),
         shippingFee: Number(shippingFee),
         total: Number(total),
         paymentMethod,
