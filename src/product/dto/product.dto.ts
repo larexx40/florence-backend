@@ -12,6 +12,7 @@ import {
   IsPositive,
   IsString,
   IsUUID,
+  Max,
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -243,4 +244,22 @@ export class UpdateProductDto {
   @IsDecimal()
   @IsPositive()
   directDiscountValue?: string;
+}
+
+export class BestSellerQueryDto {
+  @ApiPropertyOptional({ example: 10, description: 'Number of products to return (1–20, default 10)' })
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value, 10))
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  limit?: number;
+
+  @ApiPropertyOptional({ example: 90, description: 'Lookback window in days (7–365, default 90)' })
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value, 10))
+  @IsInt()
+  @Min(7)
+  @Max(365)
+  days?: number;
 }

@@ -27,7 +27,7 @@ import { CacheInterceptor } from 'src/cache/cache.interceptor';
 import { UploadFiles } from 'src/common/helpers/file-upload.helper';
 import { AttachImageDto } from 'src/image/dto/image.dto';
 import { ProductService } from './product.service';
-import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
+import { BestSellerQueryDto, CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
 import { ProductDetailResponseDto, ProductListResponseDto } from './dto/product-response.dto';
 import { VariantService } from './variant/variant.service';
 import { GlobalVariantQueryDto } from './variant/dto/variant.dto';
@@ -72,6 +72,16 @@ export class ProductController {
   @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
   getAllVariants(@Query() query: GlobalVariantQueryDto) {
     return this.variantService.getAllGlobal(query);
+  }
+
+  @Get('best-sellers')
+  @UseInterceptors(CacheInterceptor)
+  @Cacheable(300)
+  @ApiOperation({ summary: 'Top products by units sold from paid orders in the last N days' })
+  @ApiResponse({ status: 200, description: 'Best sellers returned, ordered by units sold descending' })
+  @ApiResponse({ status: 400, description: 'Invalid query parameters' })
+  getBestSellers(@Query() query: BestSellerQueryDto) {
+    return this.productService.getBestSellers(query);
   }
 
   @Get(':idOrSlug')

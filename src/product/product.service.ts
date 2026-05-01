@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { DirectDiscountType, Prisma } from '@prisma/client';
+import { DirectDiscountType, PaymentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponse, PaginatedData } from 'src/common/types';
 import { CacheService } from 'src/cache/cache.service';
@@ -15,7 +15,7 @@ import { generateSku } from './helpers/sku.helper';
 import { buildS3ImageKey, cleanupOrphanedS3Image, validateImageFile } from 'src/common/helpers/image.helper';
 import { uploadFileToAWSS3 } from 'src/common/helpers/s3.upload.helper';
 import { AttachImageDto } from 'src/image/dto/image.dto';
-import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
+import { BestSellerQueryDto, CreateProductDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -186,6 +186,46 @@ export class ProductService {
   }
 
   // ── Public queries ───────────────────────────────────────────────────────────
+
+  async getBestSellers(query: BestSellerQueryDto): Promise<ApiResponse<any[]>> {
+    const limit = query.limit ?? 10;
+    const days = query.days ?? 90;
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    // Aggregate units sold per product from paid orders in the lookback window
+    const topItems = await this.prisma.orderItem.groupBy({
+      by: ['productId'],
+      where: {
+        order: {
+          paymentStatus: PaymentStatus.PAID,
+          placedAt: { gte: since },
+        },
+      },
+      _sum: { quantity: true },
+      orderBy: { _sum: { quantity: 'desc' } },
+      take: limit,
+    });
+
+    if (topItems.length === 0) {
+      return { status: true, message: 'Best sellers fetched successfully', data: [] };
+    }
+
+    const productIds = topItems.map((t) => t.productId);
+
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, isActive: true, isDeleted: false },
+      include: PRODUCT_LIST_INCLUDE,
+    });
+
+    // Preserve the ranking order from the aggregation and attach unitsSold
+    const unitsSoldMap = new Map(topItems.map((t) => [t.productId, t._sum.quantity ?? 0]));
+    const ranked = productIds
+      .map((id) => products.find((p) => p.id === id))
+      .filter(Boolean)
+      .map((p) => ({ ...withPriceRange(p!), unitsSold: unitsSoldMap.get(p!.id) ?? 0 }));
+
+    return { status: true, message: 'Best sellers fetched successfully', data: ranked };
+  }
 
   async getAll(
     query: ProductQueryDto,

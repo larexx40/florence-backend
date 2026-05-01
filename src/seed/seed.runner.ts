@@ -1,6 +1,9 @@
 import { PrismaClient, Role } from '@prisma/client';
 import { Logger } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { categoryOptionsSeedData } from './data/category-options.seed';
 
 const seedLogger = new Logger('SeedRunner');
 
@@ -32,6 +35,11 @@ export interface SeedRunSummary {
     skipped: number;
     credentials: SeedUserCredential[];
   };
+  categories: { created: number; skipped: number };
+  categoryOptions: { created: number; skipped: number };
+  products: { created: number; skipped: number };
+  variants: { created: number; skipped: number };
+  productImages: { created: number; skipped: number };
 }
 
 export const defaultSeedUsers: SeedUserInput[] = [
@@ -1469,6 +1477,11 @@ export async function runSeed(
     cities: { created: 0, skipped: 0 },
     localGovernments: { created: 0, skipped: 0 },
     users: { created: 0, skipped: 0, credentials: [] },
+    categories: { created: 0, skipped: 0 },
+    categoryOptions: { created: 0, skipped: 0 },
+    products: { created: 0, skipped: 0 },
+    variants: { created: 0, skipped: 0 },
+    productImages: { created: 0, skipped: 0 },
   };
 
   for (const stateData of statesData) {
@@ -1585,7 +1598,206 @@ export async function runSeed(
     });
   }
 
+  // ── 3. Categories ────────────────────────────────────────────────────────────
+
+  const categorySeedData = [
+    { name: 'Bags',              slug: 'bags' },
+    { name: 'Shoes',             slug: 'shoes' },
+    { name: 'Slippers',          slug: 'slippers' },
+    { name: 'Phone Accessories', slug: 'phone-accessories' },
+    { name: 'Home & Kitchen',    slug: 'home-kitchen' },
+  ];
+
+  for (const cat of categorySeedData) {
+    const existing = await prisma.category.findUnique({ where: { slug: cat.slug } });
+    if (existing) { summary.categories.skipped++; continue; }
+    await prisma.category.create({ data: { name: cat.name, slug: cat.slug } });
+    summary.categories.created++;
+  }
+
+  // ── 4. Category options ───────────────────────────────────────────────────────
+
+  for (const entry of categoryOptionsSeedData) {
+    const category = await prisma.category.findUnique({ where: { slug: entry.categorySlug } });
+    if (!category) continue;
+
+    for (const option of entry.options) {
+      const existing = await prisma.categoryOption.findUnique({
+        where: { categoryId_name: { categoryId: category.id, name: option.name } },
+      });
+      if (existing) { summary.categoryOptions.skipped++; continue; }
+      await prisma.categoryOption.create({
+        data: { categoryId: category.id, name: option.name, isRequired: option.isRequired },
+      });
+      summary.categoryOptions.created++;
+    }
+  }
+
+  // ── 5. Products, variants, and images from shopify-data.json ─────────────────
+
+  const catalogPath = join(process.cwd(), 'prisma', 'data', 'shopify-data.json');
+  const catalog = JSON.parse(readFileSync(catalogPath, 'utf8')) as {
+    products: Array<{
+      category: string;
+      product: {
+        name: string;
+        slug: string;
+        description?: string | null;
+        isActive: boolean;
+        minOrderQty?: number;
+        orderIncrement?: number | null;
+      };
+      options: Array<{ name: string; values: string[] }>;
+      variants: Array<{
+        sku: string;
+        title: string;
+        price: number;
+        compareAtPrice?: number | null;
+        stockQty: number;
+        isActive: boolean;
+        weightKg?: number | null;
+        selectedOptions: Array<{ optionName: string; value: string }>;
+      }>;
+      images: Array<{ url: string; altText?: string | null; position?: number }>;
+    }>;
+  };
+
+  for (const entry of catalog.products) {
+    const category = await prisma.category.findUnique({ where: { slug: entry.category } });
+    if (!category) { summary.products.skipped++; continue; }
+
+    // ── product ───────────────────────────────────────────────────────────────
+    let product = await prisma.product.findUnique({ where: { slug: entry.product.slug } });
+    if (!product) {
+      product = await prisma.product.create({
+        data: {
+          name:           entry.product.name,
+          slug:           entry.product.slug,
+          description:    entry.product.description ?? null,
+          categoryId:     category.id,
+          isActive:       entry.product.isActive ?? true,
+          isFeatured:     (entry.product as any).isFeatured  ?? false,
+          isBestSeller:   (entry.product as any).isBestSeller ?? false,
+          minOrderQty:    entry.product.minOrderQty ?? 1,
+          orderIncrement: entry.product.orderIncrement ?? null,
+        },
+      });
+      summary.products.created++;
+    } else {
+      summary.products.skipped++;
+    }
+
+    // ── options & values ──────────────────────────────────────────────────────
+    for (const option of entry.options) {
+      const normalisedName = normaliseOptionName(option.name);
+      if (!normalisedName) continue;
+
+      const catOption = await prisma.categoryOption.findFirst({
+        where: { categoryId: category.id, name: { equals: normalisedName, mode: 'insensitive' } },
+      });
+      if (!catOption) continue;
+
+      let productOption = await prisma.productOption.findUnique({
+        where: { productId_categoryOptionId: { productId: product.id, categoryOptionId: catOption.id } },
+      });
+      if (!productOption) {
+        productOption = await prisma.productOption.create({
+          data: { productId: product.id, categoryOptionId: catOption.id },
+        });
+      }
+
+      for (const value of option.values) {
+        const exists = await prisma.productOptionValue.findUnique({
+          where: { productOptionId_value: { productOptionId: productOption.id, value } },
+        });
+        if (!exists) {
+          await prisma.productOptionValue.create({
+            data: { productOptionId: productOption.id, value },
+          });
+        }
+      }
+    }
+
+    // ── variants ──────────────────────────────────────────────────────────────
+    for (const variant of entry.variants) {
+      const existing = await prisma.productVariant.findUnique({ where: { sku: variant.sku } });
+      if (existing) { summary.variants.skipped++; continue; }
+
+      // resolve each selected option to its ProductOptionValue id
+      const povIds: string[] = [];
+      for (const sel of variant.selectedOptions) {
+        const normalisedName = normaliseOptionName(sel.optionName);
+        if (!normalisedName) continue;
+
+        const pov = await prisma.productOptionValue.findFirst({
+          where: {
+            value: sel.value,
+            productOption: {
+              productId: product.id,
+              categoryOption: { categoryId: category.id, name: { equals: normalisedName, mode: 'insensitive' } },
+            },
+          },
+          select: { id: true },
+        });
+        if (pov) povIds.push(pov.id);
+      }
+
+      const created = await prisma.productVariant.create({
+        data: {
+          productId:      product.id,
+          sku:            variant.sku,
+          title:          variant.title,
+          price:          variant.price,
+          compareAtPrice: variant.compareAtPrice ?? null,
+          stockQty:       variant.stockQty,
+          isActive:       variant.isActive ?? true,
+          weightKg:       variant.weightKg ?? null,
+        },
+      });
+
+      for (const povId of povIds) {
+        await prisma.variantOptionValue.create({
+          data: { variantId: created.id, productOptionValueId: povId },
+        });
+      }
+
+      summary.variants.created++;
+    }
+
+    // ── product images ────────────────────────────────────────────────────────
+    for (const image of entry.images) {
+      const exists = await prisma.productImage.findFirst({
+        where: { productId: product.id, url: image.url },
+      });
+      if (exists) { summary.productImages.skipped++; continue; }
+      await prisma.productImage.create({
+        data: {
+          productId: product.id,
+          url:       image.url,
+          altText:   image.altText ?? null,
+          position:  image.position ?? 0,
+        },
+      });
+      summary.productImages.created++;
+    }
+  }
+
   return summary;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Maps messy Shopify option names to the canonical CategoryOption names used in the DB.
+// Returns null for Shopify internal options (Title, Price, Code) that aren't real dimensions.
+function normaliseOptionName(raw: string): string | null {
+  const lower = raw.toLowerCase().trim();
+  if (['title', 'price', 'code'].includes(lower)) return null;
+  if (/colou?rs?l?/.test(lower)) return 'Color';
+  if (/sizes?/.test(lower))      return 'Size';
+  if (/quantity/.test(lower))    return 'Quantity';
+  if (/model/.test(lower))       return 'Model';
+  // Unknown option name — caller will skip it if no matching CategoryOption exists
+  return raw.trim();
 }
 
 export async function runSeedCli() {
